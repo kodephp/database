@@ -199,6 +199,10 @@ abstract class Model implements ArrayAccess, JsonSerializable
             return false;
         }
 
+        if (!$this->beforeForceDelete()) {
+            return false;
+        }
+
         $sql = sprintf(
             'DELETE FROM %s WHERE %s = ?',
             $this->table,
@@ -209,6 +213,7 @@ abstract class Model implements ArrayAccess, JsonSerializable
 
         if ($affected > 0) {
             $this->exists = false;
+            $this->afterForceDelete();
             $this->afterDelete();
         }
 

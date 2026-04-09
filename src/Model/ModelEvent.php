@@ -6,11 +6,12 @@ namespace Kode\Database\Model;
 
 /**
  * 模型事件钩子
- * 支持增删改查前后操作
+ * 支持增删改查前后操作、观察者模式
  */
 trait ModelEvent
 {
     protected static array $dispatcher = [];
+    protected static array $observers = [];
 
     /**
      * 注册模型事件
@@ -25,23 +26,59 @@ trait ModelEvent
     }
 
     /**
+     * 注册观察者
+     */
+    public static function observe(Observer|string $observer): void
+    {
+        $class = static::class;
+
+        if (is_string($observer)) {
+            $observer = new $observer();
+        }
+
+        self::$observers[$class] = $observer;
+    }
+
+    /**
+     * 获取观察者
+     */
+    public static function getObserver(): ?Observer
+    {
+        $class = static::class;
+        return self::$observers[$class] ?? null;
+    }
+
+    /**
      * 触发事件
      */
     protected function fireModelEvent(string $event): mixed
     {
         $class = static::class;
+        $result = true;
 
-        if (!isset(self::$dispatcher[$class][$event])) {
-            return true;
+        // 触发注册的回调
+        if (isset(self::$dispatcher[$class][$event])) {
+            $callback = self::$dispatcher[$class][$event];
+            if ($callback instanceof \Closure) {
+                $result = $callback($this);
+            } else {
+                $result = call_user_func($callback, $this);
+            }
+            if ($result === false) {
+                return false;
+            }
         }
 
-        $callback = self::$dispatcher[$class][$event];
-
-        if ($callback instanceof \Closure) {
-            return $callback($this);
+        // 触发观察者方法
+        $observer = self::$observers[$class] ?? null;
+        if ($observer && method_exists($observer, $event)) {
+            $observerResult = $observer->{$event}($this);
+            if ($observerResult === false) {
+                return false;
+            }
         }
 
-        return call_user_func($callback, $this);
+        return $result;
     }
 
     /**
@@ -125,6 +162,22 @@ trait ModelEvent
     }
 
     /**
+     * 强制删除前
+     */
+    public static function forceDeleting(callable $callback): void
+    {
+        static::registerEvent('forceDeleting', $callback);
+    }
+
+    /**
+     * 强制删除后
+     */
+    public static function forceDeleted(callable $callback): void
+    {
+        static::registerEvent('forceDeleted', $callback);
+    }
+
+    /**
      * 执行保存操作前
      */
     protected function beforeSave(): bool
@@ -194,6 +247,23 @@ trait ModelEvent
     }
 
     /**
+     * 执行强制删除前
+     */
+    protected function beforeForceDelete(): bool
+    {
+        $result = $this->fireModelEvent('forceDeleting');
+        return $result !== false;
+    }
+
+    /**
+     * 执行强制删除后
+     */
+    protected function afterForceDelete(): void
+    {
+        $this->fireModelEvent('forceDeleted');
+    }
+
+    /**
      * 清除模型事件
      */
     public static function clearEvent(string $event): void
@@ -209,5 +279,14 @@ trait ModelEvent
     {
         $class = static::class;
         unset(self::$dispatcher[$class]);
+    }
+
+    /**
+     * 清除观察者
+     */
+    public static function clearObserver(): void
+    {
+        $class = static::class;
+        unset(self::$observers[$class]);
     }
 }
