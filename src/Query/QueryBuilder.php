@@ -8,7 +8,7 @@ use Kode\Database\Exception\QueryException;
 
 /**
  * 查询构建器
- * 支持链式调用
+ * 兼容 Laravel/ThinkPHP 查询语法
  */
 class QueryBuilder
 {
@@ -22,6 +22,7 @@ class QueryBuilder
     protected string $orderDirection = 'ASC';
     protected ?string $groupBy = null;
     protected ?string $having = null;
+    protected ?string $primaryKey = 'id';
 
     public function __construct(protected mixed $connection)
     {
@@ -30,26 +31,30 @@ class QueryBuilder
     /**
      * 设置表
      */
-    public function from(string $table): static
+    public function table(string $table): static
     {
         $this->table = $table;
         return $this;
     }
 
     /**
-     * 表别名
+     * from 别名
      */
-    public function table(string $table): static
+    public function from(string $table): static
     {
-        return $this->from($table);
+        return $this->table($table);
     }
 
     /**
-     * 设置列
+     * 设置查询列（不执行，等待 get/first/find 触发）
      */
     public function select(array|string ...$columns): static
     {
-        $this->columns = is_array($columns[0] ?? null) ? $columns[0] : $columns;
+        if (count($columns) === 1 && is_array($columns[0])) {
+            $this->columns = $columns[0];
+        } else {
+            $this->columns = $columns;
+        }
         return $this;
     }
 
@@ -100,6 +105,17 @@ class QueryBuilder
     }
 
     /**
+     * where not in
+     */
+    public function whereNotIn(string $column, array $values): static
+    {
+        $placeholders = implode(', ', array_fill(0, count($values), '?'));
+        $this->wheres[] = "{$column} NOT IN ({$placeholders})";
+        $this->bindings = array_merge($this->bindings, $values);
+        return $this;
+    }
+
+    /**
      * where null
      */
     public function whereNull(string $column): static
@@ -114,6 +130,17 @@ class QueryBuilder
     public function whereNotNull(string $column): static
     {
         $this->wheres[] = "{$column} IS NOT NULL";
+        return $this;
+    }
+
+    /**
+     * where between
+     */
+    public function whereBetween(string $column, mixed $min, mixed $max): static
+    {
+        $this->wheres[] = "{$column} BETWEEN ? AND ?";
+        $this->bindings[] = $min;
+        $this->bindings[] = $max;
         return $this;
     }
 
@@ -164,32 +191,30 @@ class QueryBuilder
     }
 
     /**
-     * 执行查询
+     * 通过主键查找
      */
-    public function get(): array
+    public function find(mixed $id): ?array
     {
-        $sql = $this->buildSelect();
-
-        try {
-            return $this->connection->select($sql, $this->bindings);
-        } catch (\Throwable $e) {
-            throw new QueryException(
-                "查询执行失败: {$e->getMessage()}",
-                previous: $e,
-                sql: $sql,
-                bindings: $this->bindings
-            );
-        }
+        $this->where($this->primaryKey, '=', $id);
+        $this->limit(1);
+        return $this->fetchOne();
     }
 
     /**
-     * 获取第一条
+     * 获取所有记录
+     */
+    public function get(): array
+    {
+        return $this->fetchAll();
+    }
+
+    /**
+     * 获取第一条记录
      */
     public function first(): ?array
     {
         $this->limit(1);
-        $results = $this->get();
-        return $results[0] ?? null;
+        return $this->fetchOne();
     }
 
     /**
@@ -262,7 +287,7 @@ class QueryBuilder
     }
 
     /**
-     * 插入
+     * 插入数据
      */
     public function insert(array $data): bool
     {
@@ -328,7 +353,7 @@ class QueryBuilder
     }
 
     /**
-     * 更新
+     * 更新数据
      */
     public function update(array $data): int
     {
@@ -369,8 +394,29 @@ class QueryBuilder
      */
     public function increment(string $column, int $amount = 1): int
     {
-        $data = [$column => $column . ' + ' . $amount];
-        return $this->update($data);
+        $sql = sprintf(
+            'UPDATE %s SET %s = %s + ?',
+            $this->table,
+            $column,
+            $column
+        );
+
+        $bindings = [$amount];
+        if (!empty($this->wheres)) {
+            $sql .= ' WHERE ' . implode(' AND ', $this->wheres);
+            $bindings = array_merge($bindings, $this->bindings);
+        }
+
+        try {
+            return $this->connection->update($sql, $bindings);
+        } catch (\Throwable $e) {
+            throw new QueryException(
+                "自增失败: {$e->getMessage()}",
+                previous: $e,
+                sql: $sql,
+                bindings: $bindings
+            );
+        }
     }
 
     /**
@@ -378,8 +424,29 @@ class QueryBuilder
      */
     public function decrement(string $column, int $amount = 1): int
     {
-        $data = [$column => $column . ' - ' . $amount];
-        return $this->update($data);
+        $sql = sprintf(
+            'UPDATE %s SET %s = %s - ?',
+            $this->table,
+            $column,
+            $column
+        );
+
+        $bindings = [$amount];
+        if (!empty($this->wheres)) {
+            $sql .= ' WHERE ' . implode(' AND ', $this->wheres);
+            $bindings = array_merge($bindings, $this->bindings);
+        }
+
+        try {
+            return $this->connection->update($sql, $bindings);
+        } catch (\Throwable $e) {
+            throw new QueryException(
+                "自减失败: {$e->getMessage()}",
+                previous: $e,
+                sql: $sql,
+                bindings: $bindings
+            );
+        }
     }
 
     /**
@@ -435,9 +502,46 @@ class QueryBuilder
             'total' => $total,
             'per_page' => $perPage,
             'current_page' => $page,
-            'last_page' => ceil($total / $perPage),
+            'last_page' => $total > 0 ? (int) ceil($total / $perPage) : 1,
             'items' => $items,
         ];
+    }
+
+    /**
+     * 设置主键名
+     */
+    public function setPrimaryKey(string $key): static
+    {
+        $this->primaryKey = $key;
+        return $this;
+    }
+
+    /**
+     * 内部方法：执行查询获取所有
+     */
+    protected function fetchAll(): array
+    {
+        $sql = $this->buildSelect();
+
+        try {
+            return $this->connection->select($sql, $this->bindings);
+        } catch (\Throwable $e) {
+            throw new QueryException(
+                "查询失败: {$e->getMessage()}",
+                previous: $e,
+                sql: $sql,
+                bindings: $this->bindings
+            );
+        }
+    }
+
+    /**
+     * 内部方法：执行查询获取一条
+     */
+    protected function fetchOne(): ?array
+    {
+        $results = $this->fetchAll();
+        return $results[0] ?? null;
     }
 
     /**

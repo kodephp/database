@@ -210,10 +210,7 @@ abstract class Model implements ArrayAccess, JsonSerializable
     public static function find(mixed $id): ?static
     {
         $instance = new static();
-        $result = Db::table($instance->table)
-            ->where($instance->primaryKey, '=', $id)
-            ->select()
-            ->first();
+        $result = Db::table($instance->table)->find($id);
 
         if ($result) {
             return $instance->newFromBuilder($result);
@@ -242,7 +239,7 @@ abstract class Model implements ArrayAccess, JsonSerializable
     public static function first(): ?static
     {
         $instance = new static();
-        $result = Db::table($instance->table)->select()->first();
+        $result = Db::table($instance->table)->first();
 
         if ($result) {
             return $instance->newFromBuilder($result);
@@ -574,17 +571,8 @@ abstract class Model implements ArrayAccess, JsonSerializable
      */
     public function getForeignKey(): string
     {
-        return \strtolower(\lcfirst(class_basename(static::class))) . '_id';
-    }
-
-    /**
-     * 预加载
-     */
-    public static function with(string|array $relations): \Kode\Database\Query\QueryBuilder
-    {
-        $instance = new static();
-        $query = $instance->newQuery();
-        return $query->with($relations);
+        $className = basename(str_replace('\\', '/', static::class));
+        return \strtolower(\lcfirst($className)) . '_id';
     }
 
     /**
