@@ -4,7 +4,7 @@
 
 ## 特性
 
-- **全 ORM 支持**：一对一、一对多、多对多、多态关联
+- **全 ORM 支持**：一对一、一对多、多对多、多态关联、预加载
 - **连接池管理**：协程上下文隔离，支持 Fiber
 - **事件监听**：SQL 监听、事务事件
 - **Schema 定义**：表结构构建器
@@ -62,6 +62,9 @@ Db::table('users')->find(1);
 Db::table('users')->select('name', 'email')->get();
 Db::table('users')->select(['name', 'email'])->get();
 
+// 去重
+Db::table('users')->distinct()->select('name')->get();
+
 // where 条件
 Db::table('users')->where('status', '=', 1)->get();
 Db::table('users')->where('status', 1)->get();
@@ -70,12 +73,16 @@ Db::table('users')->whereNotIn('id', [4, 5])->get();
 Db::table('users')->whereNull('deleted_at')->get();
 Db::table('users')->whereNotNull('updated_at')->get();
 Db::table('users')->whereBetween('age', 18, 30)->get();
+Db::table('users')->whereNotBetween('age', 60, 100)->get();
 
 // 条件查询
 Db::table('users')
     ->when($search, fn($q) => $q->where('name', 'like', "%{$search}%"))
     ->when($status, fn($q) => $q->where('status', '=', $status))
     ->get();
+
+// orWhere
+Db::table('users')->where('status', '=', 1)->orWhere('type', '=', 'admin')->get();
 
 // 排序分页
 Db::table('users')->orderBy('id', 'DESC')->limit(10)->get();
@@ -419,6 +426,8 @@ $user->password = '123456'; // 修改器自动加密
 
 ## 关联关系
 
+### 定义关联
+
 ```php
 class User extends Model
 {
@@ -442,26 +451,78 @@ class User extends Model
         return $this->belongsToMany(Role::class);
     }
 
-    // 多态
+    // 多态一对一
+    public function comment() {
+        return $this->morphOne(Comment::class, 'commentable');
+    }
+
+    // 多态一对多
     public function comments() {
         return $this->morphMany(Comment::class, 'commentable');
     }
 
+    // 多态（反向）
     public function commentable() {
         return $this->morphTo();
     }
-}
 
-// 使用
+    // 多态多对多（正向）
+    public function tags() {
+        return $this->morphToMany(Tag::class, 'taggable');
+    }
+
+    // 多态多对多（反向）
+    public function tagged() {
+        return $this->morphedByMany(Tag::class, 'taggable');
+    }
+}
+```
+
+### 预加载 (Eager Loading)
+
+```php
+// 预加载关联
+$users = User::with('profile')->get();
+
+// 预加载多个关联
+$users = User::with('profile,posts')->get();
+
+// 嵌套预加载
+$users = User::with('profile,posts.comments')->get();
+
+// 条件预加载
+$users = User::with(['posts' => function ($q) {
+    $q->where('status', '=', 1);
+}])->get();
+```
+
+### 使用关联
+
+```php
 $user = User::find(1);
+
+// 一对一
 $profile = $user->profile;
+
+// 一对多
 $posts = $user->posts;
+$postCount = $user->posts()->count();
 
 // 多对多操作
 $user->roles()->attach($roleId);
 $user->roles()->detach($roleId);
 $user->roles()->sync([1, 2, 3]);
 $user->roles()->toggle([1, 2]);
+
+// 检查是否关联
+$user->roles()->exists($roleId);
+
+// 获取关联数量
+$user->roles()->count();
+
+// 多态
+$comments = $post->comments;
+$post = $comment->commentable;
 ```
 
 ---
@@ -607,7 +668,7 @@ src/
 │   │   ├── HasAttributes.php    # 获取器/修改器
 │   │   ├── SoftDeletes.php       # 软删除
 │   │   ├── Timestamps.php        # 时间戳
-│   │   └── QueriesRelationships.php  # 关联查询
+│   │   └── QueriesRelationships.php  # 关联查询/预加载
 │   ├── Relation/   # 关联类
 │   │   ├── HasOne.php
 │   │   ├── HasMany.php
