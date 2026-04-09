@@ -309,10 +309,8 @@ class Db
 
     /**
      * 清除连接池
-     *
-     * @param string|null $name 连接名称（暂不支持，仅清除全部）
      */
-    public static function clearPool(?string $name = null): void
+    public static function clearPool(): void
     {
         PoolManager::clear();
     }
@@ -417,10 +415,8 @@ class Db
 
     /**
      * 重新连接
-     *
-     * @param string|null $name 连接名称
      */
-    public static function reconnect(?string $name = null): void
+    public static function reconnect(): void
     {
         PoolManager::clear();
     }
@@ -521,13 +517,23 @@ class Db
             return false;
         }
 
-        $exists = self::table($table)->where(function ($q) use ($uniqueKeys, $data) {
-            foreach ($uniqueKeys as $key) {
-                if (isset($data[$key])) {
-                    $q->where($key, '=', $data[$key]);
-                }
+        $whereConditions = [];
+        foreach ($uniqueKeys as $key) {
+            if (isset($data[$key])) {
+                $whereConditions[] = "{$key} = ?";
             }
-        })->exists();
+        }
+
+        $bindings = [];
+        foreach ($uniqueKeys as $key) {
+            if (isset($data[$key])) {
+                $bindings[] = $data[$key];
+            }
+        }
+
+        $exists = self::table($table)
+            ->whereRaw(implode(' AND ', $whereConditions), $bindings)
+            ->exists();
 
         if ($exists) {
             $where = [];
@@ -940,7 +946,7 @@ class Db
      */
     public static function enableQueryLog(bool $enabled = true): void
     {
-        // 日志功能预留接口
+        // 日志功能预留接口 - $enabled 参数暂未使用
     }
 
     /**

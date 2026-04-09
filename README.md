@@ -883,6 +883,21 @@ User::pluck('name', ['status' => 1]); // 带条件获取
 User::destroy([1, 2, 3]);           // 软删除多个
 User::deleteBatch([1, 2, 3]);       // 逻辑删除多个
 User::forceDeleteBatch([1, 2, 3]);  // 强制删除多个
+
+// Model 工具方法
+$info = User::getInfo();                    // 获取模型元信息
+$table = User::getTableName();              // 获取表名
+$pk = User::getPrimaryKeyName();            // 获取主键名
+$fillable = User::getFillableFields();     // 获取 fillable 字段
+$guarded = User::getGuardedFields();       // 获取 guarded 字段
+$isFillable = User::checkFillable('name'); // 检查字段是否可以批量赋值
+$hasSoftDeletes = User::hasSoftDeletes();   // 检查是否使用软删除
+$total = User::count();                     // 获取记录数
+$activeCount = User::countWhere(['status' => 1]); // 带条件统计
+$lastId = User::getLastInsertId();         // 获取最后插入 ID
+$dbName = User::getDatabaseName();         // 获取数据库名称
+$statusStats = User::groupByStatus();     // 统计各状态数量
+$rawResult = User::raw('SELECT * FROM users LIMIT 1'); // 执行原生 SQL
 ```
 
 ### Model 跨库操作

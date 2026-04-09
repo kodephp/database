@@ -1106,4 +1106,144 @@ abstract class Model implements ArrayAccess, JsonSerializable
     {
         return static::destroy($ids, true);
     }
+
+    /**
+     * 获取模型元信息
+     *
+     * @return array
+     */
+    public static function getInfo(): array
+    {
+        $instance = new static();
+        return [
+            'table' => $instance->table,
+            'primaryKey' => $instance->primaryKey,
+            'connection' => $instance->connection,
+            'database' => $instance->database,
+            'fillable' => $instance->fillable,
+            'guarded' => $instance->guarded,
+            'casts' => $instance->casts,
+            'timestamps' => $instance->timestamps,
+            'softDeletes' => $instance->usesSoftDeletes(),
+        ];
+    }
+
+    /**
+     * 获取表名
+     *
+     * @return string
+     */
+    public static function getTableName(): string
+    {
+        $instance = new static();
+        return $instance->table;
+    }
+
+    /**
+     * 获取主键名
+     *
+     * @return string
+     */
+    public static function getPrimaryKeyName(): string
+    {
+        $instance = new static();
+        return $instance->primaryKey;
+    }
+
+    /**
+     * 检查是否使用软删除
+     *
+     * @return bool
+     */
+    public static function hasSoftDeletes(): bool
+    {
+        $instance = new static();
+        return $instance->usesSoftDeletes();
+    }
+
+    /**
+     * 获取 fillable 字段
+     *
+     * @return array
+     */
+    public static function getFillableFields(): array
+    {
+        $instance = new static();
+        return $instance->fillable;
+    }
+
+    /**
+     * 检查字段是否可以批量赋值
+     *
+     * @param string $key 字段名
+     * @return bool
+     */
+    public static function checkFillable(string $key): bool
+    {
+        if (empty(static::getFillableFields())) {
+            return !in_array($key, static::getGuardedFields());
+        }
+        return in_array($key, static::getFillableFields());
+    }
+
+    /**
+     * 获取 guarded 字段
+     *
+     * @return array
+     */
+    public static function getGuardedFields(): array
+    {
+        $instance = new static();
+        return $instance->guarded;
+    }
+
+    /**
+     * 获取当前表记录数（带条件）
+     *
+     * @param array $conditions 条件
+     * @return int
+     */
+    public static function countWhere(array $conditions): int
+    {
+        $instance = new static();
+        return \Kode\Database\Db\Db::table($instance->table)->where($conditions)->count();
+    }
+
+    /**
+     * 执行原生 SQL
+     *
+     * @param string $sql SQL 语句
+     * @param array $bindings 参数
+     * @return array
+     */
+    public static function raw(string $sql, array $bindings = []): array
+    {
+        return \Kode\Database\Db\Db::select($sql, $bindings);
+    }
+
+    /**
+     * 获取最后插入 ID
+     *
+     * @return int|string
+     */
+    public static function getLastInsertId(): int|string
+    {
+        $result = \Kode\Database\Db\Db::select('SELECT LAST_INSERT_ID() as id');
+        return $result[0]['id'] ?? 0;
+    }
+
+    /**
+     * 统计各状态数量
+     *
+     * @param string $field 字段名
+     * @return array
+     */
+    public static function groupByStatus(string $field = 'status'): array
+    {
+        $instance = new static();
+        return \Kode\Database\Db\Db::table($instance->table)
+            ->select([$field, 'COUNT(*) as count'])
+            ->groupBy($field)
+            ->get();
+    }
 }
