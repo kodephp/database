@@ -280,7 +280,7 @@ abstract class Model implements ArrayAccess, JsonSerializable
             $instance->fill(array_merge($attributes, $values));
         } else {
             foreach ($values as $key => $value) {
-                $instance->$key = $value;
+                $instance->setAttribute($key, $value);
             }
         }
 
