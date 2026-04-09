@@ -551,4 +551,162 @@ class Db
 
         return self::tableWrite($table)->insert($data);
     }
+
+    /**
+     * 模型静态调用代理
+     * 支持 User::find(1) 形式调用
+     *
+     * @param string $method 方法名
+     * @param array $arguments 参数
+     * @return mixed
+     */
+    public static function __callStatic(string $method, array $arguments): mixed
+    {
+        throw new \BadMethodCallException("请创建 Model 类后使用静态方法调用");
+    }
+
+    /**
+     * 直接执行批量 SQL
+     *
+     * @param array $sqls SQL数组
+     * @return array 结果数组
+     */
+    public static function batch(array $sqls): array
+    {
+        $results = [];
+        foreach ($sqls as $key => $sql) {
+            if (is_string($sql)) {
+                $results[$key] = self::select($sql);
+            } elseif (is_array($sql) && count($sql) >= 2) {
+                $results[$key] = self::select($sql[0], $sql[1] ?? []);
+            }
+        }
+        return $results;
+    }
+
+    /**
+     * 批量执行写入
+     *
+     * @param string $table 表名
+     * @param array $records 记录数组
+     * @param int $chunkSize 分块大小
+     * @return int 成功数量
+     */
+    public static function batchInsert(string $table, array $records, int $chunkSize = 1000): int
+    {
+        return self::chunkInsert($table, $records, $chunkSize);
+    }
+
+    /**
+     * 批量执行更新
+     *
+     * @param string $table 表名
+     * @param array $data 更新数据数组
+     * @param string $field 判断字段
+     * @return int 成功数量
+     */
+    public static function batchUpdate(string $table, array $data, string $field = 'id'): int
+    {
+        if (empty($data)) {
+            return 0;
+        }
+
+        $affected = 0;
+        foreach ($data as $record) {
+            if (!isset($record[$field])) {
+                continue;
+            }
+
+            $id = $record[$field];
+            unset($record[$field]);
+
+            if (!empty($record)) {
+                $affected += self::tableWrite($table)
+                    ->where($field, '=', $id)
+                    ->update($record);
+            }
+        }
+
+        return $affected;
+    }
+
+    /**
+     * 清空表
+     *
+     * @param string $table 表名
+     * @return bool
+     */
+    public static function truncate(string $table): bool
+    {
+        return self::statement("TRUNCATE TABLE {$table}");
+    }
+
+    /**
+     * 获取数据库版本
+     *
+     * @return string
+     */
+    public static function getVersion(): string
+    {
+        $result = self::select('SELECT VERSION() as version');
+        return $result[0]['version'] ?? 'unknown';
+    }
+
+    /**
+     * 检查表是否存在
+     *
+     * @param string $table 表名
+     * @return bool
+     */
+    public static function tableExists(string $table): bool
+    {
+        $config = self::$config;
+        $database = $config['database'] ?? '';
+        $result = self::select(
+            "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?",
+            [$database, $table]
+        );
+        return !empty($result);
+    }
+
+    /**
+     * 获取表结构
+     *
+     * @param string $table 表名
+     * @return array
+     */
+    public static function getTableColumns(string $table): array
+    {
+        $config = self::$config;
+        $database = $config['database'] ?? '';
+        return self::select(
+            "SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE, COLUMN_DEFAULT, COLUMN_KEY, EXTRA FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? ORDER BY ORDINAL_POSITION",
+            [$database, $table]
+        );
+    }
+
+    /**
+     * 表达式查询
+     *
+     * @param string $expression SQL 表达式
+     * @param array $bindings 参数
+     * @return array
+     */
+    public static function raw(string $expression, array $bindings = []): array
+    {
+        return self::select($expression, $bindings);
+    }
+
+    /**
+     * 获取最后执行的 SQL
+     *
+     * @return string
+     */
+    public static function getLastSql(): string
+    {
+        return self::$lastSql ?? '';
+    }
+
+    /** @var string|null 最后执行的 SQL */
+    protected static ?string $lastSql = null;
 }

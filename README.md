@@ -579,6 +579,45 @@ $result = Db::table('orders')->aggregates([
 ]);
 ```
 
+### Db 静态类增强方法
+
+```php
+// 批量执行 SQL
+$results = Db::batch([
+    'users' => 'SELECT * FROM users LIMIT 10',
+    'count' => ['SELECT COUNT(*) as total FROM users', []],
+]);
+
+// 批量插入
+$records = [['name' => 'a'], ['name' => 'b'], ['name' => 'c']];
+$count = Db::batchInsert('users', $records);
+
+// 批量更新
+$data = [
+    ['id' => 1, 'name' => 'updated1'],
+    ['id' => 2, 'name' => 'updated2'],
+];
+$affected = Db::batchUpdate('users', $data);
+
+// 清空表
+Db::truncate('users');
+
+// 获取数据库版本
+$version = Db::getVersion();
+
+// 检查表是否存在
+$exists = Db::tableExists('users');
+
+// 获取表结构
+$columns = Db::getTableColumns('users');
+
+// 表达式查询
+$result = Db::raw('SELECT NOW() as now');
+
+// 批量 Upsert
+Db::upsert('users', ['email' => 'test@example.com', 'name' => 'test'], ['email']);
+```
+
 ### 行锁定
 
 ```php
@@ -736,7 +775,48 @@ User::count();
 User::sum('balance');
 ```
 
-### 模型跨库操作
+### Model 增强方法
+
+```php
+// 批量操作
+User::insertBatch($records);      // 批量插入
+User::updateBatch($data);        // 批量更新
+User::upsert($data, ['email']); // Upsert
+User::upsertBatch($records, ['email']); // 批量 Upsert
+
+// 分页查询
+User::paginate(1, 15, 'id', 'DESC');      // 自定义排序分页
+User::simplePaginate(1, 15);              // 简单分页（只返回数据和总数）
+
+// 大数据遍历
+User::chunk(function ($users) {
+    foreach ($users as $user) {
+        process($user);
+    }
+}, 1000);
+
+User::cursor(function ($user) {
+    sendEmail($user);
+}, 500);
+
+// 查找多个
+User::findMany([1, 2, 3]);
+
+// 聚合查询
+User::aggregates(['count' => '*', 'sum' => 'balance']);
+
+// 获取字段值
+User::value(['id' => 1], 'name');  // 获取单条记录的单字段值
+User::pluck('name');              // 获取单列值列表
+User::pluck('name', ['status' => 1]); // 带条件获取
+
+// 批量删除
+User::destroy([1, 2, 3]);           // 软删除多个
+User::deleteBatch([1, 2, 3]);       // 逻辑删除多个
+User::forceDeleteBatch([1, 2, 3]);  // 强制删除多个
+```
+
+### Model 跨库操作
 
 ```php
 // 使用 on() 指定连接

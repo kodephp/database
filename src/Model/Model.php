@@ -414,9 +414,16 @@ abstract class Model implements ArrayAccess, JsonSerializable
     /**
      * 分页
      */
-    public static function paginate(int $page = 1, int $perPage = 15): array
-    {
-        return static::query()->paginate($page, $perPage);
+    public static function paginate(
+        int $page = 1,
+        int $perPage = 15,
+        string $orderField = 'id',
+        string $orderDirection = 'DESC'
+    ): array {
+        $instance = new static();
+        return \Kode\Database\Db\Db::table($instance->table)
+            ->orderBy($orderField, $orderDirection)
+            ->paginate($page, $perPage);
     }
 
     /**
@@ -824,5 +831,279 @@ abstract class Model implements ArrayAccess, JsonSerializable
         }
 
         return $results;
+    }
+
+    /**
+     * 批量创建
+     *
+     * @param array $records 记录数组
+     * @param int $chunkSize 分块大小
+     * @return int 成功创建数量
+     */
+    public static function insertBatch(array $records, int $chunkSize = 1000): int
+    {
+        if (empty($records)) {
+            return 0;
+        }
+
+        $instance = new static();
+        $query = \Kode\Database\Db\Db::tableWrite($instance->table);
+        return $query->insertChunk($records, $chunkSize);
+    }
+
+    /**
+     * 批量更新
+     *
+     * @param array $data 更新数据
+     * @param string $field 判断字段
+     * @return int 成功更新数量
+     */
+    public static function updateBatch(array $data, string $field = 'id'): int
+    {
+        if (empty($data)) {
+            return 0;
+        }
+
+        $instance = new static();
+        $affected = 0;
+
+        foreach ($data as $record) {
+            if (!isset($record[$field])) {
+                continue;
+            }
+
+            $id = $record[$field];
+            unset($record[$field]);
+
+            if (!empty($record)) {
+                $affected += \Kode\Database\Db\Db::tableWrite($instance->table)
+                    ->where($field, '=', $id)
+                    ->update($record);
+            }
+        }
+
+        return $affected;
+    }
+
+    /**
+     * Upsert - 插入或更新
+     *
+     * @param array $data 数据
+     * @param array $uniqueKeys 唯一键
+     * @param array $updateKeys 更新字段
+     * @return bool
+     */
+    public static function upsert(array $data, array $uniqueKeys, array $updateKeys = []): bool
+    {
+        $instance = new static();
+        return \Kode\Database\Db\Db::tableWrite($instance->table)
+            ->upsert($data, $uniqueKeys, $updateKeys);
+    }
+
+    /**
+     * 批量 Upsert
+     *
+     * @param array $records 记录数组
+     * @param array $uniqueKeys 唯一键
+     * @param array $updateKeys 更新字段
+     * @return int 成功数量
+     */
+    public static function upsertBatch(array $records, array $uniqueKeys, array $updateKeys = []): int
+    {
+        if (empty($records)) {
+            return 0;
+        }
+
+        $instance = new static();
+        $query = \Kode\Database\Db\Db::tableWrite($instance->table);
+        return $query->upsertAll($records, $uniqueKeys, $updateKeys);
+    }
+
+    /**
+     * 简单分页 - 只返回数据和总数
+     *
+     * @param int $page 页码
+     * @param int $perPage 每页数量
+     * @return array
+     */
+    public static function simplePaginate(int $page = 1, int $perPage = 15): array
+    {
+        $instance = new static();
+        $query = \Kode\Database\Db\Db::table($instance->table);
+        $total = $query->count();
+        $offset = ($page - 1) * $perPage;
+        $items = $query->offset($offset)->limit($perPage)->get();
+
+        return [
+            'total' => $total,
+            'per_page' => $perPage,
+            'current_page' => $page,
+            'last_page' => $total > 0 ? (int) ceil($total / $perPage) : 1,
+            'items' => $items,
+        ];
+    }
+
+    /**
+     * Chunk 分块处理
+     *
+     * @param callable $callback 回调函数
+     * @param int $chunkSize 每块数量
+     * @param string $orderField 排序字段
+     * @return bool
+     */
+    public static function chunk(callable $callback, int $chunkSize = 1000, string $orderField = 'id'): bool
+    {
+        $instance = new static();
+        return \Kode\Database\Db\Db::table($instance->table)
+            ->orderBy($orderField)
+            ->chunk($callback, $chunkSize);
+    }
+
+    /**
+     * 游标遍历
+     *
+     * @param callable $callback 回调函数
+     * @param int $chunkSize 每块数量
+     * @return bool
+     */
+    public static function cursor(callable $callback, int $chunkSize = 1000): bool
+    {
+        $instance = new static();
+        return \Kode\Database\Db\Db::table($instance->table)
+            ->orderBy($instance->primaryKey)
+            ->cursor($callback, $chunkSize);
+    }
+
+    /**
+     * 查找多个
+     *
+     * @param array $ids ID数组
+     * @return array
+     */
+    public static function findMany(array $ids): array
+    {
+        if (empty($ids)) {
+            return [];
+        }
+
+        $instance = new static();
+        return \Kode\Database\Db\Db::table($instance->table)
+            ->whereIn($instance->primaryKey, $ids)
+            ->get();
+    }
+
+    /**
+     * 检查记录是否存在
+     *
+     * @param array $conditions 条件
+     * @return bool
+     */
+    public static function checkExists(array $conditions): bool
+    {
+        $instance = new static();
+        return \Kode\Database\Db\Db::table($instance->table)
+            ->where($conditions)
+            ->exists();
+    }
+
+    /**
+     * 获取单条记录的值
+     *
+     * @param array $conditions 条件
+     * @param string $field 字段名
+     * @return mixed
+     */
+    public static function value(array $conditions, string $field)
+    {
+        $instance = new static();
+        return \Kode\Database\Db\Db::table($instance->table)
+            ->where($conditions)
+            ->value($field);
+    }
+
+    /**
+     * 获取单列值列表
+     *
+     * @param string $field 字段名
+     * @param array|null $conditions 条件
+     * @return array
+     */
+    public static function pluck(string $field, ?array $conditions = null): array
+    {
+        $instance = new static();
+        $query = \Kode\Database\Db\Db::table($instance->table);
+
+        if ($conditions !== null) {
+            $query->where($conditions);
+        }
+
+        return $query->pluck($field);
+    }
+
+    /**
+     * 聚合查询
+     *
+     * @param array $aggregates 聚合配置 ['count' => '*', 'sum' => 'balance']
+     * @param array $conditions 条件
+     * @return array
+     */
+    public static function aggregates(array $aggregates, array $conditions = []): array
+    {
+        $instance = new static();
+        $query = \Kode\Database\Db\Db::table($instance->table);
+
+        if (!empty($conditions)) {
+            $query->where($conditions);
+        }
+
+        return $query->aggregates($aggregates);
+    }
+
+    /**
+     * 删除多个
+     *
+     * @param array $ids ID数组
+     * @param bool $force 是否强制删除
+     * @return int 删除数量
+     */
+    public static function destroy(array $ids, bool $force = false): int
+    {
+        if (empty($ids)) {
+            return 0;
+        }
+
+        $instance = new static();
+
+        if ($force || !$instance->usesSoftDeletes()) {
+            return \Kode\Database\Db\Db::tableWrite($instance->table)
+                ->whereIn($instance->primaryKey, $ids)
+                ->delete();
+        }
+
+        return \Kode\Database\Db\Db::tableWrite($instance->table)
+            ->whereIn($instance->primaryKey, $ids)
+            ->update([$instance->getSoftDeleteField() => date($instance->dateFormat)]);
+    }
+
+    /**
+     * 逻辑删除多个
+     *
+     * @param array $ids ID数组
+     * @return int 删除数量
+     */
+    public static function deleteBatch(array $ids): int
+    {
+        return static::destroy($ids, false);
+    }
+
+    /**
+     * 强制删除多个
+     *
+     * @param array $ids ID数组
+     * @return int 删除数量
+     */
+    public static function forceDeleteBatch(array $ids): int
+    {
+        return static::destroy($ids, true);
     }
 }
