@@ -433,6 +433,51 @@ Db::table('users')->sum('balance');
 
 // 检查存在
 Db::table('users')->where('email', $email)->exists();
+
+// 日期时间查询
+Db::table('orders')->whereDate('created_at', '=', '2024-01-01')->get();
+Db::table('orders')->whereYear('created_at', '=', '2024')->get();
+Db::table('orders')->whereMonth('created_at', '=', '01')->get();
+Db::table('orders')->whereDay('created_at', '=', '01')->get();
+Db::table('orders')->whereTime('created_at', '>=', '09:00:00')->get();
+
+// Null 查询
+Db::table('users')->whereNull('deleted_at')->get();
+Db::table('users')->whereNotNull('email')->get();
+
+// Between 查询
+Db::table('users')->whereBetween('age', 18, 30)->get();
+Db::table('users')->whereNotBetween('age', 18, 30)->get();
+
+// 列比较
+Db::table('orders')->whereColumn('updated_at', '>', 'created_at')->get();
+
+// 原始条件
+Db::table('users')->whereRaw('status = ? AND age > ?', [1, 18])->get();
+
+// 子查询
+Db::table('users')
+    ->where('id', 'in', function($q) {
+        $q->select('user_id')->from('orders')->where('total', '>', 100);
+    })
+    ->get();
+
+Db::table('users')->whereExists(function($q) {
+    $q->select('*')->from('orders')->whereRaw('orders.user_id = users.id');
+})->get();
+
+// 联合查询
+Db::table('users')->where('status', 1)
+    ->union('SELECT * FROM admins')
+    ->get();
+
+Db::table('users')
+    ->unionAll(Db::table('temp_users'))
+    ->get();
+
+// 复制查询
+$query = Db::table('users')->where('status', 1);
+$clonedQuery = $query->copy();
 ```
 
 ### ThinkPHP 风格方法
@@ -961,6 +1006,45 @@ class User extends Model
         'created_at' => 'datetime',
     ];
 }
+```
+
+### 模型序列化
+
+```php
+// 转换为数组
+$user = User::find(1);
+$array = $user->toArray();
+
+// 转换为 JSON
+$json = $user->toJson();
+
+// 隐藏字段
+class User extends Model
+{
+    protected array $hidden = ['password', 'remember_token'];
+}
+
+// 只显示指定字段
+$user->makeVisible(['password']);
+$array = $user->toArray();
+
+// 追加字段
+$user->append(['status_text']);
+$array = $user->toArray();
+
+// 检查修改
+$user->isDirty();              // 是否有修改
+$user->isDirty('name');       // 指定字段是否修改
+$user->wasChanged('name');    // 指定字段是否被修改过
+$dirty = $user->getDirty();   // 获取修改的字段
+
+// 原始数据
+$original = $user->getOriginal();           // 获取所有原始数据
+$name = $user->getOriginalValue('name');   // 获取指定原始值
+
+// 同步原始数据
+$user->syncOriginal();        // 同步所有原始数据
+$user->syncChanges();         // 同步修改的数据
 ```
 
 ---

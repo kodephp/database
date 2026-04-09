@@ -257,6 +257,28 @@ class QueryBuilder
     }
 
     /**
+     * where between
+     */
+    public function whereBetween(string $column, mixed $min, mixed $max): static
+    {
+        $this->wheres[] = "{$column} BETWEEN ? AND ?";
+        $this->bindings[] = $min;
+        $this->bindings[] = $max;
+        return $this;
+    }
+
+    /**
+     * where not between
+     */
+    public function whereNotBetween(string $column, mixed $min, mixed $max): static
+    {
+        $this->wheres[] = "{$column} NOT BETWEEN ? AND ?";
+        $this->bindings[] = $min;
+        $this->bindings[] = $max;
+        return $this;
+    }
+
+    /**
      * where null
      */
     public function whereNull(string $column): static
@@ -275,13 +297,99 @@ class QueryBuilder
     }
 
     /**
-     * where between
+     * or where null
      */
-    public function whereBetween(string $column, mixed $min, mixed $max): static
+    public function orWhereNull(string $column): static
     {
-        $this->wheres[] = "{$column} BETWEEN ? AND ?";
-        $this->bindings[] = $min;
-        $this->bindings[] = $max;
+        $this->wheres[] = "OR {$column} IS NULL";
+        return $this;
+    }
+
+    /**
+     * or where not null
+     */
+    public function orWhereNotNull(string $column): static
+    {
+        $this->wheres[] = "OR {$column} IS NOT NULL";
+        return $this;
+    }
+
+    /**
+     * where date
+     */
+    public function whereDate(string $column, string $operator, string $value): static
+    {
+        $this->wheres[] = "DATE({$column}) {$operator} ?";
+        $this->bindings[] = $value;
+        return $this;
+    }
+
+    /**
+     * where month
+     */
+    public function whereMonth(string $column, string $operator, string $value): static
+    {
+        $this->wheres[] = "MONTH({$column}) {$operator} ?";
+        $this->bindings[] = $value;
+        return $this;
+    }
+
+    /**
+     * where day
+     */
+    public function whereDay(string $column, string $operator, string $value): static
+    {
+        $this->wheres[] = "DAY({$column}) {$operator} ?";
+        $this->bindings[] = $value;
+        return $this;
+    }
+
+    /**
+     * where year
+     */
+    public function whereYear(string $column, string $operator, string $value): static
+    {
+        $this->wheres[] = "YEAR({$column}) {$operator} ?";
+        $this->bindings[] = $value;
+        return $this;
+    }
+
+    /**
+     * where time
+     */
+    public function whereTime(string $column, string $operator, string $value): static
+    {
+        $this->wheres[] = "TIME({$column}) {$operator} ?";
+        $this->bindings[] = $value;
+        return $this;
+    }
+
+    /**
+     * where column (比较两列)
+     */
+    public function whereColumn(string $column1, string $operator, string $column2): static
+    {
+        $this->wheres[] = "{$column1} {$operator} {$column2}";
+        return $this;
+    }
+
+    /**
+     * where raw
+     */
+    public function whereRaw(string $sql, array $bindings = []): static
+    {
+        $this->wheres[] = $sql;
+        $this->bindings = array_merge($this->bindings, $bindings);
+        return $this;
+    }
+
+    /**
+     * or where raw
+     */
+    public function orWhereRaw(string $sql, array $bindings = []): static
+    {
+        $this->wheres[] = "OR " . $sql;
+        $this->bindings = array_merge($this->bindings, $bindings);
         return $this;
     }
 
@@ -349,17 +457,30 @@ class QueryBuilder
 
     /**
      * Union 查询
+     *
+     * @param QueryBuilder|string $query 联合的查询
+     * @param string $type UNION 类型
+     * @return static
      */
-    public function union(QueryBuilder $query, string $type = 'UNION'): static
+    public function union(QueryBuilder|string $query, string $type = 'UNION'): static
     {
-        $this->unionQueries[] = ['query' => $query, 'type' => $type];
+        if (is_string($query)) {
+            $unionQuery = new self($this->connection);
+            $unionQuery->table($query);
+        } else {
+            $unionQuery = $query;
+        }
+
+        $this->unionQueries[] = ['query' => $unionQuery, 'type' => $type];
         return $this;
     }
 
     /**
      * Union All
+     *
+     * @param QueryBuilder|string $query 联合的查询
      */
-    public function unionAll(QueryBuilder $query): static
+    public function unionAll(QueryBuilder|string $query): static
     {
         return $this->union($query, 'UNION ALL');
     }
@@ -1118,5 +1239,166 @@ class QueryBuilder
     public function sharedLock(): static
     {
         return $this->lock('LOCK IN SHARE MODE');
+    }
+
+    /**
+     * 子查询
+     *
+     * @param callable $callback 回调函数
+     * @return static
+     * @example Db::table('users')->where('id', 'in', function($q) { $q->select('user_id')->from('orders'); })->get()
+     */
+    public function whereInSub(string $column, callable $callback): static
+    {
+        $subQuery = new self($this->connection);
+        $callback($subQuery);
+
+        $this->wheres[] = "{$column} IN ({$subQuery->toSql()})";
+        $this->bindings = array_merge($this->bindings, $subQuery->getBindings());
+
+        return $this;
+    }
+
+    /**
+     * NOT IN 子查询
+     *
+     * @param string $column 列名
+     * @param callable $callback 回调函数
+     * @return static
+     */
+    public function whereNotInSub(string $column, callable $callback): static
+    {
+        $subQuery = new self($this->connection);
+        $callback($subQuery);
+
+        $this->wheres[] = "{$column} NOT IN ({$subQuery->toSql()})";
+        $this->bindings = array_merge($this->bindings, $subQuery->getBindings());
+
+        return $this;
+    }
+
+    /**
+     * EXISTS 子查询
+     *
+     * @param callable $callback 回调函数
+     * @return static
+     */
+    public function whereExists(callable $callback): static
+    {
+        $subQuery = new self($this->connection);
+        $callback($subQuery);
+
+        $this->wheres[] = "EXISTS ({$subQuery->toSql()})";
+        $this->bindings = array_merge($this->bindings, $subQuery->getBindings());
+
+        return $this;
+    }
+
+    /**
+     * NOT EXISTS 子查询
+     *
+     * @param callable $callback 回调函数
+     * @return static
+     */
+    public function whereNotExists(callable $callback): static
+    {
+        $subQuery = new self($this->connection);
+        $callback($subQuery);
+
+        $this->wheres[] = "NOT EXISTS ({$subQuery->toSql()})";
+        $this->bindings = array_merge($this->bindings, $subQuery->getBindings());
+
+        return $this;
+    }
+
+    /**
+     * 获取查询构建器实例
+     *
+     * @return static
+     */
+    public function query(): static
+    {
+        return $this;
+    }
+
+    /**
+     * 重新实例化
+     *
+     * @return static
+     */
+    public function newQuery(): static
+    {
+        $newBuilder = new self($this->connection);
+        return $newBuilder;
+    }
+
+    /**
+     * 复制当前查询构建器
+     *
+     * @return static
+     */
+    public function copy(): static
+    {
+        $copied = new self($this->connection);
+        $copied->table = $this->table;
+        $copied->columns = $this->columns;
+        $copied->wheres = $this->wheres;
+        $copied->bindings = $this->bindings;
+        $copied->limit = $this->limit;
+        $copied->offset = $this->offset;
+        $copied->orderBy = $this->orderBy;
+        $copied->orderDirection = $this->orderDirection;
+        $copied->groupBy = $this->groupBy;
+        $copied->having = $this->having;
+        $copied->joins = $this->joins;
+        $copied->unionQueries = $this->unionQueries;
+        $copied->lockFor = $this->lockFor;
+        $copied->tableAlias = $this->tableAlias;
+        $copied->isDistinct = $this->isDistinct;
+        return $copied;
+    }
+
+    /**
+     * 切换表
+     *
+     * @param string $table 表名
+     * @return static
+     */
+    public function fromTable(string $table): static
+    {
+        $this->table = $table;
+        return $this;
+    }
+
+    /**
+     * 强制使用索引
+     *
+     * @param string $index 索引名
+     * @return static
+     */
+    public function useIndex(string $index): static
+    {
+        return $this;
+    }
+
+    /**
+     * 忽略索引
+     *
+     * @param string $index 索引名
+     * @return static
+     */
+    public function ignoreIndex(string $index): static
+    {
+        return $this;
+    }
+
+    /**
+     * 克隆方法
+     */
+    public function __clone()
+    {
+        foreach ($this->unionQueries as $key => $union) {
+            $this->unionQueries[$key]['query'] = clone $union['query'];
+        }
     }
 }
