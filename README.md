@@ -66,7 +66,9 @@ Db::table('users')->select(['name', 'email'])->get();
 Db::table('users')->where('status', '=', 1)->get();
 Db::table('users')->where('status', 1)->get();
 Db::table('users')->whereIn('id', [1, 2, 3])->get();
+Db::table('users')->whereNotIn('id', [4, 5])->get();
 Db::table('users')->whereNull('deleted_at')->get();
+Db::table('users')->whereNotNull('updated_at')->get();
 Db::table('users')->whereBetween('age', 18, 30)->get();
 
 // 条件查询
@@ -85,6 +87,12 @@ Db::table('users')->sum('balance');
 Db::table('users')->avg('balance');
 Db::table('users')->max('balance');
 Db::table('users')->min('balance');
+
+// 分页
+Db::table('users')->paginate(1, 15);
+
+// 检查存在
+Db::table('users')->where('email', $email)->exists();
 ```
 
 ### 表连接 (JOIN)
@@ -129,12 +137,6 @@ Db::table('users')->where('id', '=', 1)->dec('balance', 100);
 
 // 删除
 Db::table('users')->where('id', '=', 1)->delete();
-
-// 分页
-Db::table('users')->paginate(1, 15);
-
-// 检查存在
-Db::table('users')->where('email', $email)->exists();
 ```
 
 ### 原生 SQL
@@ -154,6 +156,16 @@ Db::transaction(function () {
     Db::table('users')->insert(['name' => 'test']);
     Db::table('accounts')->insert(['user_id' => 1, 'balance' => 100]);
 });
+
+// 手动控制
+Db::beginTransaction();
+try {
+    // ...
+    Db::commit();
+} catch (\Throwable $e) {
+    Db::rollback();
+    throw $e;
+}
 ```
 
 ---
@@ -172,6 +184,13 @@ class User extends Model
     protected array $fillable = ['name', 'email', 'status'];
     protected array $guarded = ['password'];
     protected bool $timestamps = true;
+    protected string $dateFormat = 'Y-m-d H:i:s';
+    protected array $casts = [
+        'status' => 'int',
+        'balance' => 'float',
+        'is_active' => 'bool',
+        'options' => 'array',
+    ];
 }
 ```
 
@@ -192,6 +211,9 @@ $user = User::find(1);
 $user->name = 'newname';
 $user->save();
 
+// 批量更新
+User::where('status', '=', 1)->update(['status' => 2]);
+
 // 删除
 $user->delete();
 $user->forceDelete();
@@ -204,12 +226,28 @@ User::firstOrCreate(['email' => 'test@test.com'], ['name' => 'new']);
 User::updateOrCreate(['email' => 'test@test.com'], ['name' => 'updated']);
 ```
 
-### 查询构建
+### 快捷查询方法
 
 ```php
-User::query()->where('status', '=', 1)->get();
-User::query()->orderBy('id', 'DESC')->limit(10)->get();
-User::query()->paginate(1, 15);
+// where 条件
+User::where('status', '=', 1)->get();
+User::where('status', 1)->get();
+User::whereIn('id', [1, 2, 3])->get();
+User::whereNull('deleted_at')->get();
+User::whereNotNull('updated_at')->get();
+
+// 排序
+User::orderBy('id', 'DESC')->get();
+
+// 分页
+User::paginate(1, 15);
+
+// 聚合
+User::count();
+User::sum('balance');
+User::avg('balance');
+User::max('balance');
+User::min('balance');
 ```
 
 ---
@@ -236,8 +274,6 @@ User::query()->paginate(1, 15);
 ### 闭包方式注册
 
 ```php
-use Kode\Database\Model\Model;
-
 class User extends Model
 {
     protected string $table = 'users';
@@ -265,7 +301,7 @@ User::updating(function (Model $user) {
 // 删除前 - 检查关联
 User::deleting(function (Model $user) {
     if ($user->hasOrders()) {
-        return false; // 有订单不允许删除
+        return false;
     }
 });
 
@@ -278,7 +314,6 @@ User::restored(function (Model $user) {
 ### 观察者模式
 
 ```php
-// 定义观察者
 use Kode\Database\Model\Model;
 use Kode\Database\Model\Observer;
 
@@ -374,6 +409,10 @@ class User extends Model
         'created_at' => 'datetime',
     ];
 }
+
+// 使用
+$user->status_text; // 获取器
+$user->password = '123456'; // 修改器自动加密
 ```
 
 ---
@@ -393,6 +432,11 @@ class User extends Model
         return $this->hasMany(Post::class);
     }
 
+    // 属于（反向一对一）
+    public function role() {
+        return $this->belongsTo(Role::class);
+    }
+
     // 多对多
     public function roles() {
         return $this->belongsToMany(Role::class);
@@ -402,13 +446,22 @@ class User extends Model
     public function comments() {
         return $this->morphMany(Comment::class, 'commentable');
     }
+
+    public function commentable() {
+        return $this->morphTo();
+    }
 }
 
 // 使用
 $user = User::find(1);
 $profile = $user->profile;
 $posts = $user->posts;
+
+// 多对多操作
 $user->roles()->attach($roleId);
+$user->roles()->detach($roleId);
+$user->roles()->sync([1, 2, 3]);
+$user->roles()->toggle([1, 2]);
 ```
 
 ---
@@ -424,13 +477,28 @@ Schema::create('users', function (Schema $table) {
     $table->string('name');
     $table->string('email')->unique();
     $table->string('password');
+    $table->integer('age');
+    $table->boolean('is_active')->default(true);
+    $table->decimal('balance', 10, 2)->default(0);
+    $table->text('bio')->nullable();
+    $table->json('options')->nullable();
     $table->timestamps();
     $table->softDeletes();
+
+    // 索引
+    $table->index(['user_id', 'created_at']);
+    $table->uniqueKey('email');
+
+    // 外键
+    $table->foreign('user_id')
+        ->references('id')
+        ->on('users')
+        ->onDelete('cascade');
 });
 
 // 修改表
 Schema::table('users', function (Schema $table) {
-    $table->string('phone', 20);
+    $table->string('phone', 20)->nullable();
     $table->index('phone');
 });
 
@@ -455,6 +523,22 @@ Db::table('users')->get();
 $sqls = $listener->getSqls();
 $lastSql = $listener->getLastSql();
 $listener->clear();
+```
+
+### 事务事件
+
+```php
+use Kode\Database\Event\EventManager;
+use Kode\Database\Event\TransactionBeginEvent;
+use Kode\Database\Event\TransactionCommitEvent;
+
+EventManager::getInstance()->listen(TransactionBeginEvent::class, function ($event) {
+    echo "事务开始\n";
+});
+
+EventManager::getInstance()->listen(TransactionCommitEvent::class, function ($event) {
+    echo "事务提交\n";
+});
 ```
 
 ---
@@ -512,13 +596,33 @@ src/
 ├── Connection/      # 数据库连接器
 ├── Db/             # 静态代理类
 ├── Event/          # 事件系统
+│   ├── EventManager.php
+│   ├── SqlEvent.php
+│   ├── SqlListener.php
+│   ├── SqlLogListener.php
+│   └── Transaction*.php
 ├── Exception/      # 异常类
 ├── Model/          # 模型基类
 │   ├── Concerns/   # Traits
+│   │   ├── HasAttributes.php    # 获取器/修改器
+│   │   ├── SoftDeletes.php       # 软删除
+│   │   ├── Timestamps.php        # 时间戳
+│   │   └── QueriesRelationships.php  # 关联查询
 │   ├── Relation/   # 关联类
+│   │   ├── HasOne.php
+│   │   ├── HasMany.php
+│   │   ├── BelongsTo.php
+│   │   ├── BelongsToMany.php
+│   │   ├── MorphOne.php
+│   │   ├── MorphMany.php
+│   │   ├── MorphTo.php
+│   │   └── MorphToMany.php
 │   ├── ModelEvent.php    # 模型事件
 │   └── Observer.php       # 观察者
 ├── Pool/           # 连接池
+│   ├── PoolInterface.php
+│   ├── PoolManager.php
+│   └── ConnectionPool.php
 ├── Query/          # 查询构建器
 └── Schema/         # 表结构
 ```

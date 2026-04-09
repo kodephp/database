@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace Kode\Database\Model;
 
-use Kode\Database\Db\Db;
 use Kode\Database\Model\Concerns\HasAttributes;
 use Kode\Database\Model\Concerns\SoftDeletes;
 use Kode\Database\Model\Concerns\Timestamps;
@@ -16,8 +15,6 @@ use JsonSerializable;
 /**
  * 模型基类
  * 兼容 Hyperf、ThinkPHP、Laravel ORM 使用方式
- *
- * @property mixed $id
  */
 abstract class Model implements ArrayAccess, JsonSerializable
 {
@@ -33,10 +30,8 @@ abstract class Model implements ArrayAccess, JsonSerializable
     protected array $guarded = [];
     protected bool $timestamps = true;
     protected string $dateFormat = 'Y-m-d H:i:s';
-
-    protected array $attributes = [];
-    protected array $original = [];
     protected bool $exists = false;
+    protected array $original = [];
 
     public function __construct(array $attributes = [])
     {
@@ -44,7 +39,7 @@ abstract class Model implements ArrayAccess, JsonSerializable
     }
 
     /**
-     * 批量赋值
+     * 填充数据
      */
     public function fill(array $attributes): static
     {
@@ -61,15 +56,15 @@ abstract class Model implements ArrayAccess, JsonSerializable
      */
     protected function isFillable(string $key): bool
     {
-        if (\in_array($key, $this->fillable)) {
+        if (empty($this->fillable) && empty($this->guarded)) {
             return true;
         }
 
-        if (!empty($this->guarded) && \in_array($key, $this->guarded)) {
-            return false;
+        if (!empty($this->fillable)) {
+            return in_array($key, $this->fillable, true);
         }
 
-        return empty($this->fillable);
+        return !in_array($key, $this->guarded, true);
     }
 
     /**
@@ -101,27 +96,21 @@ abstract class Model implements ArrayAccess, JsonSerializable
      */
     protected function performInsert(): bool
     {
-        $columns = array_keys($this->attributes);
-        $values = array_values($this->attributes);
-
         $sql = sprintf(
             'INSERT INTO %s (%s) VALUES (%s)',
             $this->table,
-            implode(', ', $columns),
-            implode(', ', array_fill(0, count($values), '?'))
+            implode(', ', array_keys($this->attributes)),
+            implode(', ', array_fill(0, count($this->attributes), '?'))
         );
 
-        $result = Db::insert($sql, $values);
+        $id = Db::insert($sql, array_values($this->attributes));
 
-        if ($result && $this->getKey() === null) {
-            $lastId = Db::select('SELECT LAST_INSERT_ID() as id');
-            $this->attributes[$this->primaryKey] = $lastId[0]['id'] ?? null;
+        if ($id) {
+            $this->attributes[$this->primaryKey] = $id;
+            $this->exists = true;
         }
 
-        $this->exists = true;
-        $this->syncOriginal();
-
-        return $result;
+        return $id > 0;
     }
 
     /**
@@ -129,33 +118,19 @@ abstract class Model implements ArrayAccess, JsonSerializable
      */
     protected function performUpdate(): bool
     {
-        if (!$this->exists) {
-            return false;
+        if (empty($this->getDirty())) {
+            return true;
         }
-
-        $sets = [];
-        $values = [];
-
-        foreach ($this->attributes as $key => $value) {
-            if ($key !== $this->primaryKey) {
-                $sets[] = "{$key} = ?";
-                $values[] = $value;
-            }
-        }
-
-        if ($this->timestamps) {
-            $sets[] = "{$this->updatedAtField} = ?";
-            $values[] = date($this->dateFormat);
-        }
-
-        $values[] = $this->getKey();
 
         $sql = sprintf(
             'UPDATE %s SET %s WHERE %s = ?',
             $this->table,
-            implode(', ', $sets),
+            implode(', ', array_map(fn($k) => "{$k} = ?", array_keys($this->getDirty()))),
             $this->primaryKey
         );
+
+        $values = array_values($this->getDirty());
+        $values[] = $this->getKey();
 
         $affected = Db::update($sql, $values);
 
@@ -164,6 +139,20 @@ abstract class Model implements ArrayAccess, JsonSerializable
         }
 
         return $affected > 0;
+    }
+
+    /**
+     * 获取修改的字段
+     */
+    public function getDirty(): array
+    {
+        $dirty = [];
+        foreach ($this->attributes as $key => $value) {
+            if (!array_key_exists($key, $this->original) || $this->original[$key] !== $value) {
+                $dirty[$key] = $value;
+            }
+        }
+        return $dirty;
     }
 
     /**
@@ -261,12 +250,12 @@ abstract class Model implements ArrayAccess, JsonSerializable
     /**
      * 查找或失败
      */
-    public static function findOrFail(mixed $id): ?static
+    public static function findOrFail(mixed $id): static
     {
         $result = static::find($id);
 
         if ($result === null) {
-            throw new \Kode\Database\Exception\QueryException("模型未找到: {$id}");
+            throw new \Kode\Database\Exception\QueryException("未找到记录: {$id}");
         }
 
         return $result;
@@ -288,18 +277,20 @@ abstract class Model implements ArrayAccess, JsonSerializable
     }
 
     /**
-     * 获取所有记录
+     * 获取所有
      */
     public static function all(): array
     {
         $instance = new static();
-        return $instance->newQuery()->get();
+        $results = Db::table($instance->table)->get();
+
+        return array_map(fn($r) => (new static())->newFromBuilder($r), $results);
     }
 
     /**
-     * 创建模型
+     * 创建
      */
-    public static function create(array $attributes): static
+    public static function create(array $attributes = []): static
     {
         $instance = new static();
         $instance->fill($attributes);
@@ -310,54 +301,52 @@ abstract class Model implements ArrayAccess, JsonSerializable
     /**
      * 更新或创建
      */
-    public static function updateOrCreate(array $attributes, array $values = []): static
+    public static function updateOrCreate(array $search, array $values = []): static
     {
-        $instance = static::where($attributes)->first();
+        $instance = static::where($search)->first();
 
-        if ($instance === null) {
-            $instance = new static();
-            $instance->fill(array_merge($attributes, $values));
-        } else {
+        if ($instance) {
             foreach ($values as $key => $value) {
-                $instance->setAttribute($key, $value);
+                $instance->$key = $value;
             }
+            $instance->save();
+        } else {
+            $instance = static::create(array_merge($search, $values));
         }
 
-        $instance->save();
         return $instance;
     }
 
     /**
      * 查找或创建
      */
-    public static function firstOrCreate(array $attributes, ?array $values = null): static
+    public static function firstOrCreate(array $search, array $values = []): static
     {
-        $instance = static::where($attributes)->first();
+        $instance = static::where($search)->first();
 
-        if ($instance === null) {
-            $instance = new static();
-            $instance->fill(array_merge($attributes, $values ?? []));
-            $instance->save();
+        if ($instance) {
+            return $instance;
         }
 
-        return $instance;
+        return static::create(array_merge($search, $values));
     }
 
     /**
-     * 获取新查询构建器
-     */
-    public function newQuery(): \Kode\Database\Query\QueryBuilder
-    {
-        return Db::table($this->table);
-    }
-
-    /**
-     * 查询构建
+     * 创建查询构建器
      */
     public static function query(): \Kode\Database\Query\QueryBuilder
     {
         $instance = new static();
         return $instance->newQuery();
+    }
+
+    /**
+     * 创建新的查询构建器
+     */
+    public function newQuery(): \Kode\Database\Query\QueryBuilder
+    {
+        $query = new \Kode\Database\Query\QueryBuilder(Db::getConnection());
+        return $query->table($this->table)->setPrimaryKey($this->primaryKey);
     }
 
     /**
@@ -377,6 +366,50 @@ abstract class Model implements ArrayAccess, JsonSerializable
         }
 
         return $query;
+    }
+
+    /**
+     * whereIn 条件
+     */
+    public static function whereIn(string $column, array $values): \Kode\Database\Query\QueryBuilder
+    {
+        $instance = new static();
+        return $instance->newQuery()->whereIn($column, $values);
+    }
+
+    /**
+     * whereNull 条件
+     */
+    public static function whereNull(string $column): \Kode\Database\Query\QueryBuilder
+    {
+        $instance = new static();
+        return $instance->newQuery()->whereNull($column);
+    }
+
+    /**
+     * whereNotNull 条件
+     */
+    public static function whereNotNull(string $column): \Kode\Database\Query\QueryBuilder
+    {
+        $instance = new static();
+        return $instance->newQuery()->whereNotNull($column);
+    }
+
+    /**
+     * orderBy 排序
+     */
+    public static function orderBy(string $column, string $direction = 'ASC'): \Kode\Database\Query\QueryBuilder
+    {
+        $instance = new static();
+        return $instance->newQuery()->orderBy($column, $direction);
+    }
+
+    /**
+     * 分页
+     */
+    public static function paginate(int $page = 1, int $perPage = 15): array
+    {
+        return static::query()->paginate($page, $perPage);
     }
 
     /**
@@ -403,7 +436,6 @@ abstract class Model implements ArrayAccess, JsonSerializable
         $instance = new static();
         $instance->setAttributes($attributes, true);
         $instance->exists = true;
-        $instance->syncOriginal();
         return $instance;
     }
 
@@ -450,77 +482,6 @@ abstract class Model implements ArrayAccess, JsonSerializable
     }
 
     /**
-     * 获取属性
-     */
-    public function getAttribute(string $key): mixed
-    {
-        if ($key === 'id' && !$this->offsetExists('id')) {
-            return null;
-        }
-
-        if (!$this->offsetExists($key)) {
-            return null;
-        }
-
-        $value = $this->attributes[$key];
-
-        if ($this->hasGetMutator($key)) {
-            return $this->mutateGet($key, $value);
-        }
-
-        if (isset($this->casts[$key])) {
-            return $this->castAttribute($key, $value);
-        }
-
-        return $value;
-    }
-
-    /**
-     * 设置属性
-     */
-    public function setAttribute(string $key, mixed $value): void
-    {
-        if ($this->hasSetMutator($key)) {
-            $this->attributes[$key] = $this->mutateSet($key, $value);
-            return;
-        }
-
-        $this->attributes[$key] = $value;
-    }
-
-    /**
-     * 获取获取器
-     */
-    protected function mutateGet(string $key, mixed $value): mixed
-    {
-        if (isset($this->getters[$key]) && is_callable($this->getters[$key])) {
-            return ($this->getters[$key])($value);
-        }
-
-        if (method_exists($this, $method = 'get' . ucfirst($key) . 'Attribute')) {
-            return $this->$method($value);
-        }
-
-        return $value;
-    }
-
-    /**
-     * 获取修改器
-     */
-    protected function mutateSet(string $key, mixed $value): mixed
-    {
-        if (isset($this->setters[$key]) && is_callable($this->setters[$key])) {
-            return ($this->setters[$key])($value);
-        }
-
-        if (method_exists($this, $method = 'set' . ucfirst($key) . 'Attribute')) {
-            return $this->$method($value);
-        }
-
-        return $value;
-    }
-
-    /**
      * ArrayAccess 实现
      */
     public function offsetExists(mixed $offset): bool
@@ -556,13 +517,7 @@ abstract class Model implements ArrayAccess, JsonSerializable
      */
     public function toArray(): array
     {
-        $attributes = $this->attributes;
-
-        foreach ($this->appendFields as $field) {
-            $attributes[$field] = $this->getAttribute($field);
-        }
-
-        return $attributes;
+        return $this->attributes;
     }
 
     /**
@@ -571,14 +526,6 @@ abstract class Model implements ArrayAccess, JsonSerializable
     public function getTable(): string
     {
         return $this->table;
-    }
-
-    /**
-     * 获取主键
-     */
-    public function getPrimaryKey(): string
-    {
-        return $this->primaryKey;
     }
 
     /**
@@ -655,10 +602,74 @@ abstract class Model implements ArrayAccess, JsonSerializable
     }
 
     /**
-     * 分页
+     * 获取属性
      */
-    public static function paginate(int $page = 1, int $perPage = 15): array
+    public function getAttribute(string $key): mixed
     {
-        return static::query()->paginate($page, $perPage);
+        if ($key === 'id' && !$this->offsetExists('id')) {
+            return null;
+        }
+
+        if (!$this->offsetExists($key)) {
+            return null;
+        }
+
+        $value = $this->attributes[$key];
+
+        if (isset($this->casts[$key])) {
+            return $this->castAttribute($key, $value);
+        }
+
+        return $value;
+    }
+
+    /**
+     * 设置属性
+     */
+    public function setAttribute(string $key, mixed $value): void
+    {
+        $this->attributes[$key] = $value;
+    }
+
+    /**
+     * 类型转换
+     */
+    protected function castAttribute(string $key, mixed $value): mixed
+    {
+        return match ($this->casts[$key] ?? 'string') {
+            'int', 'integer' => (int) $value,
+            'float', 'double' => (float) $value,
+            'bool', 'boolean' => (bool) $value,
+            'array' => is_array($value) ? $value : json_decode($value, true),
+            'json' => is_array($value) ? json_encode($value) : $value,
+            'datetime' => $value instanceof \DateTime ? $value : new \DateTime($value),
+            default => $value,
+        };
+    }
+
+    /**
+     * 获取软删除字段
+     */
+    public function getSoftDeleteField(): string
+    {
+        return $this->softDeleteField ?? 'deleted_at';
+    }
+
+    /**
+     * 包含软删除的查询
+     */
+    public static function withTrashed(): \Kode\Database\Query\QueryBuilder
+    {
+        $instance = new static();
+        return $instance->newQuery();
+    }
+
+    /**
+     * 仅软删除的查询
+     */
+    public static function onlyTrashed(): \Kode\Database\Query\QueryBuilder
+    {
+        $instance = new static();
+        return $instance->newQuery()->whereNotNull($instance->getSoftDeleteField());
     }
 }
