@@ -1022,24 +1022,52 @@ class User extends Model
 // 预加载
 $users = User::with('profile,posts')->get();
 
+// 关联计数（自动加载关联数量）
+$users = User::withCount('posts')->get();
+foreach ($users as $user) {
+    echo $user->posts_count; // 帖子数量
+}
+
+// 带条件的关联计数
+$users = User::withCount(['posts' => function ($q) {
+    $q->where('status', 1);
+}])->get();
+
 // 延迟预加载
 $user = User::find(1);
 $user->load('profile');
+
+// 延迟预加载（带条件）
+$user->loadWhere('posts', function ($q) {
+    $q->where('status', 1);
+});
+
+// 合并预加载
+$users = User::with('profile')->get();
+$users->mergeLoad('posts');
+
+// has - 筛选有关联记录的模型
+User::has('posts', '>=', 3)->get(); // 至少有3篇帖子的用户
+User::has('posts', '>', 0)->get();  // 至少有1篇帖子的用户
+
+// whereHas - 筛选关联满足条件的模型
+User::whereHas('posts', fn($q) => $q->where('status', 1))->get();
+
+// doesNotHave - 筛选没有关联记录的模型
+User::doesNotHave('posts')->get();
 
 // 多对多操作
 $user->roles()->attach($roleId);
 $user->roles()->detach($roleId);
 $user->roles()->sync([1, 2, 3]);
 $user->roles()->toggle([1, 2]);
-
-// 关联查询
-User::has('posts', '>=', 3)->get();
-User::whereHas('roles', fn($q) => $q->where('name', 'admin'))->get();
 ```
 
 ---
 
 ## Schema 表结构
+
+### 创建表
 
 ```php
 use Kode\Database\Schema\Schema;
@@ -1055,13 +1083,97 @@ Schema::create('users', function (Schema $table) {
     $table->timestamps();
     $table->softDeletes();
 });
+```
 
-Schema::drop('users');
+### 表选项
 
-Schema::table('users', function (Schema $table) {
-    $table->addColumn('string', 'phone', ['length' => 11]);
-    $table->index(['email', 'status']);
+```php
+Schema::create('users', function (Schema $table) {
+    $table->id();
+    $table->string('name');
+
+    // 表选项
+    $table->engine('InnoDB');           // 设置引擎
+    $table->charset('utf8mb4');         // 设置字符集
+    $table->collation('utf8mb4_unicode_ci'); // 设置排序规则
+    $table->comment('用户表');          // 表注释
+    $table->autoIncrement(1000);        // 自增初始值
 });
+```
+
+### 字段类型
+
+```php
+Schema::create('demo', function (Schema $table) {
+    // 数值类型
+    $table->id();               // bigint 自增主键
+    $table->increments('id');   // 递增字段
+    $table->integer('votes');   // int
+    $table->bigInteger('votes'); // bigint
+    $table->smallInteger('votes'); // smallint
+    $table->tinyInteger('votes', 3); // tinyint
+    $table->mediumInteger('votes'); // mediumint
+    $table->unsignedInteger('votes'); // 无符号 int
+    $table->float('amount', 10, 2); // float
+    $table->double('ratio'); // double
+    $table->decimal('amount', 10, 2); // decimal
+    $table->boolean('is_active'); // tinyint(1)
+
+    // 字符串类型
+    $table->string('name', 100); // varchar(100)
+    $table->char('code', 10);    // char(10)
+    $table->text('content');     // text
+    $table->mediumText('content'); // mediumtext
+    $table->longText('content');  // longtext
+
+    // 日期时间类型
+    $table->date('birthday');    // date
+    $table->time('work_time');   // time
+    $table->dateTime('created_at'); // datetime
+    $table->timestamp('updated_at'); // timestamp
+    $table->year('birth_year');  // year
+
+    // 特殊类型
+    $table->ipAddress('ip');     // varchar(45)
+    $table->macAddress('mac');   // char(17)
+    $table->uuid('guid');        // char(36)
+    $table->json('options');     // json
+
+    // 常用字段
+    $table->rememberToken();      // remember_token varchar(100)
+    $table->timestamps();         // created_at, updated_at
+    $table->softDeletes();        // deleted_at
+});
+```
+
+### 修改表
+
+```php
+Schema::table('users', function (Schema $table) {
+    // 添加字段
+    $table->addColumn('string', 'phone', ['length' => 11]);
+
+    // 修改字段
+    $table->modifyColumn('name', ['type' => 'varchar', 'length' => 200]);
+
+    // 删除字段
+    $table->dropColumn('phone');
+
+    // 添加索引
+    $table->index(['email', 'status']);
+    $table->uniqueKey(['email'], 'uniq_email');
+    $table->primaryKey('id');
+});
+```
+
+### 判断表/字段是否存在
+
+```php
+// 判断表是否存在
+$sql = Schema::hasTable('users');
+
+// 判断字段是否存在
+$sql = Schema::hasColumn('users', 'email');
 ```
 
 ---

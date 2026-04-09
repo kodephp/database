@@ -64,6 +64,7 @@ class Column
             'bigint' => 'bigint',
             'int', 'integer' => 'int',
             'smallint' => 'smallint',
+            'mediumint' => 'mediumint',
             'tinyint' => 'tinyint',
             'varchar' => 'varchar(' . ($this->options['length'] ?? 255) . ')',
             'char' => 'char(' . ($this->options['length'] ?? 255) . ')',
@@ -83,5 +84,29 @@ class Column
             'blob' => 'blob',
             default => $this->type,
         };
+    }
+
+    /**
+     * 是否为删除操作
+     */
+    public function isDrop(): bool
+    {
+        return $this->options['drop'] ?? false;
+    }
+
+    /**
+     * 是否为修改操作
+     */
+    public function isModify(): bool
+    {
+        return $this->options['modify'] ?? false;
+    }
+
+    /**
+     * 获取字段名
+     */
+    public function getName(): string
+    {
+        return $this->name;
     }
 }

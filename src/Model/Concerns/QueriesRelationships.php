@@ -8,17 +8,25 @@ use Kode\Database\Db\Db;
 
 /**
  * 关联查询 Trait
- * 支持一对一、一对多、多对多、多态关联
+ * 支持一对一、一对多、多对多、多态关联、预加载、关联计数
  */
 trait QueriesRelationships
 {
-    /**
-     * 预加载关联
-     */
+    /** @var array 预加载关联 */
     protected array $eagerLoad = [];
+
+    /** @var array 关联计数 */
+    protected array $withCount = [];
+
+    /** @var array 关联条件 */
+    protected array $hasConstraints = [];
 
     /**
      * 设置预加载关联
+     *
+     * @param string|array $relations 关联名
+     * @return static
+     * @example User::with('profile,posts')->get()
      */
     public function with(string|array $relations): static
     {
@@ -30,10 +38,187 @@ trait QueriesRelationships
     }
 
     /**
+     * 设置预加载并返回查询构建器
+     *
+     * @param string|array $relations 关联名
+     * @param \Closure|null $callback 回调
+     * @return static
+     */
+    public function withWhereHas(string|array $relations, ?\Closure $callback = null): static
+    {
+        $this->with($relations);
+
+        if ($callback !== null) {
+            $this->hasConstraints[$relations] = $callback;
+        }
+
+        return $this;
+    }
+
+    /**
+     * 关联计数
+     *
+     * @param string|array $relations 关联名
+     * @param \Closure|null $callback 回调
+     * @return static
+     * @example User::withCount('posts')->get()
+     */
+    public function withCount(string|array $relations, ?\Closure $callback = null): static
+    {
+        if (is_string($relations)) {
+            $relations = [$relations];
+        }
+
+        foreach ($relations as $relation) {
+            $this->withCount[] = [
+                'relation' => $relation,
+                'callback' => $callback,
+            ];
+        }
+
+        return $this;
+    }
+
+    /**
+     * 检查关联是否存在（Has）
+     *
+     * @param string $relation 关联名
+     * @param string $operator 操作符
+     * @param int $count 数量
+     * @return static
+     * @example User::has('posts', '>=', 3)->get()
+     */
+    public function has(string $relation, string $operator = '>=', int $count = 1): static
+    {
+        $this->hasConstraints[$relation] = [
+            'operator' => $operator,
+            'count' => $count,
+        ];
+        return $this;
+    }
+
+    /**
+     * 检查关联是否存在（WhereHas）
+     *
+     * @param string $relation 关联名
+     * @param \Closure|null $callback 回调
+     * @return static
+     * @example User::whereHas('posts', fn($q) => $q->where('status', 1))->get()
+     */
+    public function whereHas(string $relation, ?\Closure $callback = null): static
+    {
+        $this->hasConstraints[$relation] = [
+            'callback' => $callback,
+        ];
+        return $this;
+    }
+
+    /**
+     * 或者检查关联是否存在
+     *
+     * @param string $relation 关联名
+     * @param \Closure|null $callback 回调
+     * @return static
+     */
+    public function orWhereHas(string $relation, ?\Closure $callback = null): static
+    {
+        $this->hasConstraints[$relation] = [
+            'callback' => $callback,
+            'or' => true,
+        ];
+        return $this;
+    }
+
+    /**
+     * 检查关联不存在（DoesntHave）
+     *
+     * @param string $relation 关联名
+     * @return static
+     */
+    public function doesNotHave(string $relation): static
+    {
+        $this->hasConstraints[$relation] = [
+            'operator' => '=',
+            'count' => 0,
+        ];
+        return $this;
+    }
+
+    /**
+     * 延迟预加载
+     *
+     * @param string|array $relations 关联名
+     * @return $this
+     * @example $user->load('profile,posts')
+     */
+    public function load(string|array $relations): static
+    {
+        if (is_string($relations)) {
+            $relations = array_map('trim', explode(',', $relations));
+        }
+
+        foreach ($relations as $relation) {
+            if (method_exists($this, $relation)) {
+                $result = $this->$relation();
+
+                if ($result instanceof \Kode\Database\Model\Relation\Relation) {
+                    $this->relations[$relation] = $result->get();
+                }
+            }
+        }
+
+        return $this;
+    }
+
+    /**
+     * 延迟预加载（带条件）
+     *
+     * @param string $relation 关联名
+     * @param \Closure $callback 回调
+     * @return $this
+     */
+    public function loadWhere(string $relation, \Closure $callback): static
+    {
+        if (method_exists($this, $relation)) {
+            $result = $this->$relation();
+            if ($result instanceof \Kode\Database\Model\Relation\Relation) {
+                $callback($result->getQuery());
+                $this->relations[$relation] = $result->get();
+            }
+        }
+
+        return $this;
+    }
+
+    /**
+     * 合并预加载
+     *
+     * @param string|array $relations 关联名
+     * @return static
+     */
+    public function mergeLoad(string|array $relations): static
+    {
+        if (is_string($relations)) {
+            $relations = array_map('trim', explode(',', $relations));
+        }
+
+        $this->eagerLoad = array_unique(array_merge($this->eagerLoad, $relations));
+        return $this;
+    }
+
+    /**
      * 执行预加载
      */
     protected function eagerLoadRelations(array $models): array
     {
+        if (!empty($this->withCount)) {
+            $models = $this->eagerLoadRelationCounts($models);
+        }
+
+        foreach ($this->hasConstraints as $relation => $constraint) {
+            $models = $this->applyHasConstraint($models, $relation, $constraint);
+        }
+
         if (empty($this->eagerLoad)) {
             return $models;
         }
@@ -43,6 +228,147 @@ trait QueriesRelationships
         }
 
         return $models;
+    }
+
+    /**
+     * 预加载关联计数
+     */
+    protected function eagerLoadRelationCounts(array $models): array
+    {
+        foreach ($this->withCount as $withCount) {
+            $relation = $withCount['relation'];
+            $callback = $withCount['callback'];
+
+            foreach ($models as $model) {
+                $count = $this->getRelationCount($model, $relation, $callback);
+                $countAttr = $this->getRelationCountName($relation);
+                $model->$countAttr = $count;
+            }
+        }
+
+        return $models;
+    }
+
+    /**
+     * 获取关联计数
+     */
+    protected function getRelationCount(Model $model, string $relation, ?\Closure $callback = null): int
+    {
+        $relationMethod = camel_case($relation);
+
+        if (!method_exists($model, $relationMethod)) {
+            return 0;
+        }
+
+        $relationInstance = $model->$relationMethod();
+
+        if ($relationInstance instanceof \Kode\Database\Model\Relation\HasMany ||
+            $relationInstance instanceof \Kode\Database\Model\Relation\MorphMany) {
+            $query = new \Kode\Database\Query\QueryBuilder(\Kode\Database\Db\Db::getConnection());
+            $query->table($relationInstance->getRelated()->getTable())
+                  ->where($relationInstance->getForeignKey(), '=', $model->{$model->getKeyName()});
+
+            if ($callback !== null) {
+                $callback($query);
+            }
+
+            return $query->count();
+        }
+
+        return 0;
+    }
+
+    /**
+     * 获取关联计数属性名
+     */
+    protected function getRelationCountName(string $relation): string
+    {
+        return snake_case($relation) . '_count';
+    }
+
+    /**
+     * 应用 Has 约束
+     */
+    protected function applyHasConstraint(array $models, string $relation, array $constraint): array
+    {
+        if (empty($models)) {
+            return $models;
+        }
+
+        $relationMethod = camel_case($relation);
+        $firstModel = reset($models);
+
+        if (!method_exists($firstModel, $relationMethod)) {
+            return $models;
+        }
+
+        $relationInstance = $firstModel->$relationMethod();
+
+        if (!($relationInstance instanceof \Kode\Database\Model\Relation\HasMany ||
+              $relationInstance instanceof \Kode\Database\Model\Relation\MorphMany)) {
+            return $models;
+        }
+
+        $foreignKey = $relationInstance->getForeignKey();
+        $localKey = $firstModel->getKeyName();
+        $keys = array_filter(array_unique(array_column($models, $localKey)));
+
+        if (empty($keys)) {
+            return $models;
+        }
+
+        $query = new \Kode\Database\Query\QueryBuilder(\Kode\Database\Db\Db::getConnection());
+        $query->table($relationInstance->getRelated()->getTable())
+              ->whereIn($foreignKey, $keys);
+
+        if (isset($constraint['callback']) && is_callable($constraint['callback'])) {
+            $constraint['callback']($query);
+        }
+
+        if (isset($constraint['operator']) && isset($constraint['count'])) {
+            $operator = $constraint['operator'];
+            $count = $constraint['count'];
+
+            $groupedCounts = [];
+            $results = $query->groupBy($foreignKey)->select([$foreignKey, 'COUNT(*) as cnt'])->get();
+
+            foreach ($results as $result) {
+                $groupedCounts[$result[$foreignKey]] = (int) $result['cnt'];
+            }
+
+            $filteredModels = [];
+            foreach ($models as $model) {
+                $modelCount = $groupedCounts[$model->$localKey] ?? 0;
+                if ($this->compareCount($modelCount, $operator, $count)) {
+                    $filteredModels[] = $model;
+                }
+            }
+
+            return $filteredModels;
+        }
+
+        $existingKeys = $query->distinct()->pluck($foreignKey);
+        $existingKeys = array_column($existingKeys, $foreignKey);
+
+        return array_filter($models, function ($model) use ($localKey, $existingKeys) {
+            return in_array($model->$localKey, $existingKeys, false);
+        });
+    }
+
+    /**
+     * 比较计数
+     */
+    protected function compareCount(int $count, string $operator, int $value): bool
+    {
+        return match ($operator) {
+            '>=' => $count >= $value,
+            '>' => $count > $value,
+            '<=' => $count <= $value,
+            '<' => $count < $value,
+            '=' => $count === $value,
+            '!=' => $count !== $value,
+            default => $count >= $value,
+        };
     }
 
     /**
@@ -65,6 +391,9 @@ trait QueriesRelationships
             $this->loadBelongsToRelation($models, $relationInstance, $relation);
         } elseif ($relationInstance instanceof \Kode\Database\Model\Relation\BelongsToMany) {
             $this->loadBelongsToManyRelation($models, $relationInstance, $relation);
+        } elseif ($relationInstance instanceof \Kode\Database\Model\Relation\MorphOne ||
+                  $relationInstance instanceof \Kode\Database\Model\Relation\MorphMany) {
+            $this->loadMorphRelation($models, $relationInstance, $relation);
         }
     }
 
@@ -83,7 +412,7 @@ trait QueriesRelationships
             return;
         }
 
-        $query = new \Kode\Database\Query\QueryBuilder(Db::getConnection());
+        $query = new \Kode\Database\Query\QueryBuilder(\Kode\Database\Db\Db::getConnection());
         $query->table($related->getTable())
               ->whereIn($foreignKey, $keys);
 
@@ -121,7 +450,7 @@ trait QueriesRelationships
             return;
         }
 
-        $query = new \Kode\Database\Query\QueryBuilder(Db::getConnection());
+        $query = new \Kode\Database\Query\QueryBuilder(\Kode\Database\Db\Db::getConnection());
         $query->table($related->getTable())
               ->whereIn($ownerKey, $keys);
 
@@ -166,7 +495,7 @@ trait QueriesRelationships
             implode(',', array_fill(0, count($keys), '?'))
         );
 
-        $results = Db::select($sql, $keys);
+        $results = \Kode\Database\Db\Db::select($sql, $keys);
         $grouped = [];
 
         foreach ($results as $result) {
@@ -180,6 +509,47 @@ trait QueriesRelationships
         foreach ($models as $model) {
             $key = $model->{$this->getKeyName()};
             $model->setRelation($name, $grouped[$key] ?? []);
+        }
+    }
+
+    /**
+     * 加载多态关联
+     */
+    protected function loadMorphRelation(array $models, $relation, string $name): void
+    {
+        $related = $relation->getRelated();
+        $foreignKey = $relation->getForeignKey();
+        $morphType = $relation->getMorphType();
+        $localKey = $relation->getLocalKey();
+        $morphValue = $relation->getMorphValue();
+
+        $keys = array_filter(array_unique(array_column($models, $localKey)));
+
+        if (empty($keys)) {
+            return;
+        }
+
+        $query = new \Kode\Database\Query\QueryBuilder(\Kode\Database\Db\Db::getConnection());
+        $query->table($related->getTable())
+              ->where($morphType, '=', $morphValue)
+              ->whereIn($localKey, $keys);
+
+        $results = $query->get();
+        $grouped = [];
+
+        foreach ($results as $result) {
+            $grouped[$result[$localKey]][] = $result;
+        }
+
+        foreach ($models as $model) {
+            $key = $model->{$localKey};
+            $items = $grouped[$key] ?? [];
+
+            if ($relation instanceof \Kode\Database\Model\Relation\MorphOne) {
+                $model->setRelation($name, $items[0] ?? null);
+            } else {
+                $model->setRelation($name, $items);
+            }
         }
     }
 
