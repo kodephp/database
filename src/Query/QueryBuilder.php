@@ -48,7 +48,6 @@ class QueryBuilder
     /**
      * 设置查询列
      * Laravel 风格: Db::table('users')->select('name', 'email')->get()
-     * ThinkPHP 风格: Db::table('users')->field('name, email')->select()
      */
     public function select(array|string ...$columns): static
     {
@@ -57,30 +56,6 @@ class QueryBuilder
         }
         $this->columns = $columns;
         return $this;
-    }
-
-    /**
-     * 设置查询字段（ThinkPHP 风格）
-     *
-     * @example Db::table('users')->field('name, email')->select()
-     */
-    public function field(string|array $columns): static
-    {
-        if (is_string($columns)) {
-            $columns = array_map('trim', explode(',', $columns));
-        }
-        $this->columns = $columns;
-        return $this;
-    }
-
-    /**
-     * 执行查询（ThinkPHP 风格）
-     *
-     * @example Db::table('users')->field('name, email')->select()
-     */
-    public function select(): array
-    {
-        return $this->get();
     }
 
     /**
@@ -195,18 +170,6 @@ class QueryBuilder
         $this->orderBy = $column;
         $this->orderDirection = strtoupper($direction) === 'DESC' ? 'DESC' : 'ASC';
         return $this;
-    }
-
-    /**
-     * 排序（ThinkPHP 风格）
-     */
-    public function order(string $order): static
-    {
-        if (strpos($order, ' ') !== false) {
-            [$column, $direction] = array_map('trim', explode(' ', $order));
-            return $this->orderBy($column, $direction);
-        }
-        return $this->orderBy($order);
     }
 
     /**
@@ -542,16 +505,6 @@ class QueryBuilder
             'last_page' => $total > 0 ? (int) ceil($total / $perPage) : 1,
             'items' => $items,
         ];
-    }
-
-    /**
-     * 分页（ThinkPHP 风格）
-     */
-    public function page(int $page = 1, int $perPage = 15): static
-    {
-        $offset = ($page - 1) * $perPage;
-        $this->limit($perPage)->offset($offset);
-        return $this;
     }
 
     /**
