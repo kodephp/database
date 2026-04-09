@@ -44,7 +44,16 @@ class QueryBuilder
      */
     public function from(string $table): static
     {
-        return $this->table($table);
+        $this->table = $table;
+        return $this;
+    }
+
+    /**
+     * 获取当前表名
+     */
+    public function getTable(): string
+    {
+        return $this->table;
     }
 
     /**

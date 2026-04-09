@@ -33,6 +33,13 @@ abstract class Model implements ArrayAccess, JsonSerializable
     protected bool $exists = false;
     protected array $original = [];
 
+    protected string $connection = 'default';
+    protected string $database = '';
+    protected int $shardingCount = 1;
+    protected string $shardingStrategy = 'hash';
+    protected string $shardingKey = '';
+    protected array $rangeMap = [];
+
     public function __construct(array $attributes = [])
     {
         $this->fill($attributes);
@@ -671,5 +678,151 @@ abstract class Model implements ArrayAccess, JsonSerializable
     {
         $instance = new static();
         return $instance->newQuery()->whereNotNull($instance->getSoftDeleteField());
+    }
+
+    /**
+     * 获取分表名
+     *
+     * @param int|string|null $shardingKey 分片键
+     * @return string 实际表名
+     */
+    public function getShardingTable(int|string $shardingKey = null): string
+    {
+        if ($shardingKey === null) {
+            $shardingKey = $this->shardingKey;
+        }
+
+        if (empty($shardingKey) || $this->shardingCount <= 1) {
+            return $this->table;
+        }
+
+        return \Kode\Database\Db\Db::routeSharding(
+            $this->table,
+            $shardingKey,
+            $this->shardingStrategy,
+            $this->shardingCount,
+            $this->rangeMap
+        );
+    }
+
+    /**
+     * 指定连接
+     *
+     * @param string $connection 连接名称
+     * @return $this
+     */
+    public function on(string $connection): static
+    {
+        $this->connection = $connection;
+        return $this;
+    }
+
+    /**
+     * 指定数据库
+     *
+     * @param string $database 数据库名
+     * @return $this
+     */
+    public function onDatabase(string $database): static
+    {
+        $this->database = $database;
+        return $this;
+    }
+
+    /**
+     * 设置分片键
+     *
+     * @param int|string $key 分片键值
+     * @return $this
+     */
+    public function setShardingKey(int|string $key): static
+    {
+        $this->shardingKey = (string) $key;
+        return $this;
+    }
+
+    /**
+     * 获取分片键
+     */
+    public function getShardingKey(): string
+    {
+        return $this->shardingKey;
+    }
+
+    /**
+     * 获取连接名称
+     */
+    public function getConnectionName(): string
+    {
+        return $this->connection;
+    }
+
+    /**
+     * 获取数据库名
+     */
+    public function getDatabaseName(): string
+    {
+        return $this->database;
+    }
+
+    /**
+     * 创建新的查询构建器（支持分表）
+     */
+    public function newShardingQuery(): \Kode\Database\Query\QueryBuilder
+    {
+        $actualTable = $this->getShardingTable();
+
+        if (!empty($this->database)) {
+            $conn = \Kode\Database\Db\Db::connection($this->connection);
+            $conn->useDatabase($this->database);
+            $query = new \Kode\Database\Query\QueryBuilder($conn->getConnection());
+        } else {
+            $query = new \Kode\Database\Query\QueryBuilder(\Kode\Database\Db\Db::getConnection($this->connection));
+        }
+
+        return $query->table($actualTable)->setPrimaryKey($this->primaryKey);
+    }
+
+    /**
+     * 跨所有分片查询
+     *
+     * @param callable|null $callback 回调函数
+     * @return array
+     */
+    public function crossSharding(?callable $callback = null): array
+    {
+        $results = [];
+
+        for ($i = 0; $i < $this->shardingCount; $i++) {
+            $actualTable = "{$this->table}_{$i}";
+            $query = \Kode\Database\Db\Db::table($actualTable);
+            $result = $callback ? $callback($query, $i) : $query->get();
+            $results[$i] = $result;
+        }
+
+        return $results;
+    }
+
+    /**
+     * 批量跨分片操作
+     *
+     * @param callable $callback 回调函数，接收 (QueryBuilder $query, int $shardingIndex)
+     * @return array 汇总结果
+     */
+    public static function allShards(callable $callback): array
+    {
+        $instance = new static();
+
+        if ($instance->shardingCount <= 1) {
+            return [$callback(\Kode\Database\Db\Db::table($instance->table), 0)];
+        }
+
+        $results = [];
+        for ($i = 0; $i < $instance->shardingCount; $i++) {
+            $actualTable = "{$instance->table}_{$i}";
+            $results[$i] = $callback(\Kode\Database\Db\Db::table($actualTable), $i);
+        }
+
+        return $results;
     }
 }
