@@ -26,6 +26,8 @@ class QueryBuilder
     protected array $joins = [];
     protected array $unionQueries = [];
     protected ?string $lockFor = null;
+    protected string $tableAlias = '';
+    protected bool $isDistinct = false;
 
     public function __construct(protected mixed $connection)
     {
@@ -59,7 +61,8 @@ class QueryBuilder
 
     /**
      * 设置查询列
-     * Laravel 风格: Db::table('users')->select('name', 'email')->get()
+     * Laravel/ThinkPHP 风格: Db::table('users')->field('name,email')->get()
+     * ThinkPHP 风格别名: Db::table('users')->field('name,email')->select()
      */
     public function select(array|string ...$columns): static
     {
@@ -68,6 +71,116 @@ class QueryBuilder
         }
         $this->columns = $columns;
         return $this;
+    }
+
+    /**
+     * field - 选择字段（ThinkPHP 风格）
+     * 支持字符串和数组两种方式
+     *
+     * @param array|string $fields 字段名
+     * @return static
+     * @example Db::table('users')->field('name,email')->get()
+     * @example Db::table('users')->field(['name', 'email'])->get()
+     */
+    public function field(array|string $fields): static
+    {
+        if (is_array($fields)) {
+            return $this->select(...$fields);
+        }
+
+        $columns = array_map('trim', explode(',', $fields));
+        return $this->select(...$columns);
+    }
+
+    /**
+     * order - 排序（ThinkPHP 风格）
+     *
+     * @param string|array $order 排序字段
+     * @param string $direction 排序方向
+     * @return static
+     * @example Db::table('users')->order('id desc')->get()
+     * @example Db::table('users')->order('id', 'desc')->get()
+     */
+    public function order(string|array $order, string $direction = 'ASC'): static
+    {
+        if (is_array($order)) {
+            foreach ($order as $field => $dir) {
+                $this->orderBy($field, is_int($field) ? $direction : $dir);
+            }
+            return $this;
+        }
+
+        if (stripos($order, ' ') !== false) {
+            $parts = array_map('trim', explode(' ', $order));
+            $field = $parts[0];
+            $dir = $parts[1] ?? 'ASC';
+            return $this->orderBy($field, strtoupper($dir) === 'DESC' ? 'DESC' : 'ASC');
+        }
+
+        return $this->orderBy($order, strtoupper($direction) === 'DESC' ? 'DESC' : 'ASC');
+    }
+
+    /**
+     * page - 分页（ThinkPHP 风格）
+     *
+     * @param int $page 页码
+     * @param int $limit 每页数量
+     * @return static
+     * @example Db::table('users')->page(1, 15)->get()
+     */
+    public function page(int $page, int $limit = 15): static
+    {
+        $this->limit($limit);
+        $this->offset(($page - 1) * $limit);
+        return $this;
+    }
+
+    /**
+     * alias - 别名（ThinkPHP 风格）
+     *
+     * @param string $alias 别名
+     * @return static
+     */
+    public function alias(string $alias): static
+    {
+        $this->tableAlias = $this->table . ' AS ' . $alias;
+        return $this;
+    }
+
+    /**
+     * group - 分组（ThinkPHP 风格）
+     *
+     * @param string|array $group 分组字段
+     * @return static
+     * @example Db::table('users')->group('status')->get()
+     */
+    public function group(string|array $group): static
+    {
+        if (is_array($group)) {
+            return $this->groupBy(implode(',', $group));
+        }
+        return $this->groupBy($group);
+    }
+
+    /**
+     * distinct - 去重（ThinkPHP 风格）
+     *
+     * @return static
+     */
+    public function distinct(): static
+    {
+        $this->isDistinct = true;
+        return $this;
+    }
+
+    /**
+     * fetchSql - 返回 SQL 不执行（ThinkPHP 风格）
+     *
+     * @return string
+     */
+    public function fetchSql(): string
+    {
+        return $this->toSql();
     }
 
     /**
@@ -643,10 +756,13 @@ class QueryBuilder
      */
     protected function buildSelect(): string
     {
+        $table = !empty($this->tableAlias) ? $this->tableAlias : $this->table;
+        $columns = $this->isDistinct ? 'DISTINCT ' . implode(', ', $this->columns) : implode(', ', $this->columns);
+
         $sql = sprintf(
             'SELECT %s FROM %s',
-            implode(', ', $this->columns),
-            $this->table
+            $columns,
+            $table
         );
 
         if (!empty($this->joins)) {
@@ -722,6 +838,8 @@ class QueryBuilder
         $this->groupBy = null;
         $this->having = null;
         $this->lockFor = null;
+        $this->tableAlias = '';
+        $this->isDistinct = false;
         return $this;
     }
 

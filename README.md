@@ -435,6 +435,45 @@ Db::table('users')->sum('balance');
 Db::table('users')->where('email', $email)->exists();
 ```
 
+### ThinkPHP 风格方法
+
+```php
+// field - 选择字段（支持字符串和数组）
+Db::table('users')->field('name,email')->get();
+Db::table('users')->field(['name', 'email'])->get();
+
+// order - 排序（支持字符串和数组）
+Db::table('users')->order('id desc')->get();
+Db::table('users')->order('id', 'desc')->get();
+Db::table('users')->order(['id' => 'desc', 'created_at' => 'asc'])->get();
+
+// page - 分页（ThinkPHP 风格）
+Db::table('users')->page(1, 15)->get();  // 第一页，每页15条
+
+// limit - 限制（支持偏移量）
+Db::table('users')->limit(10)->get();      // 前10条
+Db::table('users')->limit(10, 20)->get();  // 跳过20条，取10条
+
+// group - 分组
+Db::table('orders')->group('status')->get();
+
+// alias - 表别名
+Db::table('users')->alias('u')->join('orders o', 'u.id', '=', 'o.user_id')->get();
+
+// distinct - 去重
+Db::table('users')->distinct()->field('name')->get();
+
+// fetchSql - 返回 SQL 不执行
+$sql = Db::table('users')->where('id', 1)->fetchSql();
+
+// 聚合函数
+Db::table('users')->count();
+Db::table('users')->sum('balance');
+Db::table('users')->avg('score');
+Db::table('users')->max('price');
+Db::table('users')->min('price');
+```
+
 ### 表连接 (JOIN)
 
 ```php
