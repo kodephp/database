@@ -80,6 +80,22 @@ class QueryBuilder
     }
 
     /**
+     * 条件查询
+     * 根据条件动态添加查询约束
+     *
+     * @example Db::table('users')->when($search, fn($query) => $query->where('name', 'like', "%{$search}%"))->get()
+     */
+    public function when(mixed $value, callable $callback, ?callable $default = null): static
+    {
+        if ($value) {
+            $callback($this);
+        } elseif ($default) {
+            $default($this);
+        }
+        return $this;
+    }
+
+    /**
      * or where
      */
     public function orWhere(string $column, mixed $operator, mixed $value = null): static
