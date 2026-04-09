@@ -476,7 +476,7 @@ class QueryBuilder
     /**
      * 自增
      */
-    public function increment(string $column, int $amount = 1): int
+    public function inc(string $column, int $amount = 1): int
     {
         $sql = sprintf(
             'UPDATE %s SET %s = %s + ?',
@@ -506,7 +506,7 @@ class QueryBuilder
     /**
      * 自减
      */
-    public function decrement(string $column, int $amount = 1): int
+    public function dec(string $column, int $amount = 1): int
     {
         $sql = sprintf(
             'UPDATE %s SET %s = %s - ?',

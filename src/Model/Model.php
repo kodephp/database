@@ -9,6 +9,7 @@ use Kode\Database\Model\Concerns\HasAttributes;
 use Kode\Database\Model\Concerns\SoftDeletes;
 use Kode\Database\Model\Concerns\Timestamps;
 use Kode\Database\Model\Concerns\QueriesRelationships;
+use Kode\Database\Model\ModelEvent;
 use ArrayAccess;
 use JsonSerializable;
 
@@ -24,6 +25,7 @@ abstract class Model implements ArrayAccess, JsonSerializable
     use Timestamps;
     use SoftDeletes;
     use QueriesRelationships;
+    use ModelEvent;
 
     protected string $table = '';
     protected string $primaryKey = 'id';
@@ -75,13 +77,23 @@ abstract class Model implements ArrayAccess, JsonSerializable
      */
     public function save(): bool
     {
+        if (!$this->beforeSave()) {
+            return false;
+        }
+
         $this->setTimestamps();
 
         if ($this->exists) {
-            return $this->performUpdate();
+            $result = $this->performUpdate();
+        } else {
+            $result = $this->performInsert();
         }
 
-        return $this->performInsert();
+        if ($result) {
+            $this->afterSave();
+        }
+
+        return $result;
     }
 
     /**
@@ -164,8 +176,15 @@ abstract class Model implements ArrayAccess, JsonSerializable
         }
 
         if ($this->usesSoftDeletes()) {
+            if (!$this->beforeDelete()) {
+                return false;
+            }
             $this->{$this->softDeleteField} = date($this->dateFormat);
-            return $this->save();
+            $result = $this->save();
+            if ($result) {
+                $this->afterDelete();
+            }
+            return $result;
         }
 
         return $this->forceDelete();
@@ -176,6 +195,10 @@ abstract class Model implements ArrayAccess, JsonSerializable
      */
     public function forceDelete(): bool
     {
+        if (!$this->beforeDelete()) {
+            return false;
+        }
+
         $sql = sprintf(
             'DELETE FROM %s WHERE %s = ?',
             $this->table,
@@ -186,6 +209,7 @@ abstract class Model implements ArrayAccess, JsonSerializable
 
         if ($affected > 0) {
             $this->exists = false;
+            $this->afterDelete();
         }
 
         return $affected > 0;
@@ -200,8 +224,18 @@ abstract class Model implements ArrayAccess, JsonSerializable
             return false;
         }
 
+        if (!$this->beforeRestore()) {
+            return false;
+        }
+
         $this->{$this->softDeleteField} = null;
-        return $this->save();
+        $result = $this->save();
+
+        if ($result) {
+            $this->afterRestore();
+        }
+
+        return $result;
     }
 
     /**
