@@ -12,7 +12,7 @@ use Kode\Database\Db\Connection;
 /**
  * 数据库静态代理类
  * 兼容 Webman 的 Db::table() 静态调用方式
- * 支持多数据库连接、分库分表
+ * 支持多数据库连接、分库分表、读写分离自动路由
  */
 class Db
 {
@@ -28,6 +28,12 @@ class Db
     /** @var string 默认连接名 */
     protected static string $defaultConnection = 'default';
 
+    /** @var string|null 读写分离从库连接名 */
+    protected static ?string $readConnection = null;
+
+    /** @var bool 是否启用读写分离 */
+    protected static bool $readWriteSplit = false;
+
     /**
      * 初始化默认配置
      */
@@ -39,6 +45,57 @@ class Db
         if (isset($config['pool'])) {
             PoolManager::init($config, $config['driver'] ?? self::$defaultConnection);
         }
+    }
+
+    /**
+     * 启用读写分离
+     * 自动将查询路由到从库，写操作路由到主库
+     *
+     * @param string $readConnection 从库连接名
+     * @return void
+     * @example Db::enableReadWriteSplit('slave')
+     */
+    public static function enableReadWriteSplit(string $readConnection): void
+    {
+        self::$readWriteSplit = true;
+        self::$readConnection = $readConnection;
+    }
+
+    /**
+     * 禁用读写分离
+     */
+    public static function disableReadWriteSplit(): void
+    {
+        self::$readWriteSplit = false;
+        self::$readConnection = null;
+    }
+
+    /**
+     * 判断是否为读操作
+     */
+    protected static function isReadOperation(): bool
+    {
+        return true;
+    }
+
+    /**
+     * 获取写连接（主库）
+     */
+    protected static function getWriteConnection(): mixed
+    {
+        return self::getConnection();
+    }
+
+    /**
+     * 获取读连接（从库）
+     */
+    protected static function getReadConnection(): mixed
+    {
+        if (!self::$readWriteSplit || self::$readConnection === null) {
+            return self::getConnection();
+        }
+
+        return self::getConnection(self::$readConnection);
     }
 
     /**
@@ -85,13 +142,25 @@ class Db
     }
 
     /**
-     * 获取查询构建器（静态调用方式）
+     * 获取查询构建器（静态调用方式，自动读写分离）
      *
      * @example Db::table('users')->select()->get()
      */
     public static function table(string $table): QueryBuilder
     {
-        $connection = self::getConnection();
+        $connection = self::getReadConnection();
+        $builder = new QueryBuilder($connection);
+        return $builder->from($table);
+    }
+
+    /**
+     * 获取写查询构建器（强制使用主库）
+     *
+     * @example Db::tableWrite('users')->insert([...])
+     */
+    public static function tableWrite(string $table): QueryBuilder
+    {
+        $connection = self::getWriteConnection();
         $builder = new QueryBuilder($connection);
         return $builder->from($table);
     }
@@ -114,7 +183,7 @@ class Db
      */
     public static function select(string $sql, array $bindings = []): array
     {
-        $connection = self::getConnection();
+        $connection = self::getReadConnection();
         return $connection->select($sql, $bindings);
     }
 
@@ -125,7 +194,7 @@ class Db
      */
     public static function insert(string $sql, array $bindings = []): bool
     {
-        $connection = self::getConnection();
+        $connection = self::getWriteConnection();
         return $connection->insert($sql, $bindings);
     }
 
@@ -136,7 +205,7 @@ class Db
      */
     public static function update(string $sql, array $bindings = []): int
     {
-        $connection = self::getConnection();
+        $connection = self::getWriteConnection();
         return $connection->update($sql, $bindings);
     }
 
@@ -147,7 +216,7 @@ class Db
      */
     public static function delete(string $sql, array $bindings = []): int
     {
-        $connection = self::getConnection();
+        $connection = self::getWriteConnection();
         return $connection->delete($sql, $bindings);
     }
 
@@ -158,7 +227,7 @@ class Db
      */
     public static function statement(string $sql): bool
     {
-        $connection = self::getConnection();
+        $connection = self::getWriteConnection();
         return $connection->statement($sql);
     }
 
@@ -167,7 +236,7 @@ class Db
      */
     public static function beginTransaction(): void
     {
-        $connection = self::getConnection();
+        $connection = self::getWriteConnection();
         $connection->beginTransaction();
     }
 
@@ -176,7 +245,7 @@ class Db
      */
     public static function commit(): void
     {
-        $connection = self::getConnection();
+        $connection = self::getWriteConnection();
         $connection->commit();
     }
 
@@ -185,7 +254,7 @@ class Db
      */
     public static function rollback(): void
     {
-        $connection = self::getConnection();
+        $connection = self::getWriteConnection();
         $connection->rollBack();
     }
 
@@ -414,5 +483,72 @@ class Db
             $results[$i] = $callback($actualTable, $i);
         }
         return $results;
+    }
+
+    /**
+     * 批量插入（优化版）- 支持 chunk 分段插入
+     *
+     * @param string $table 表名
+     * @param array $records 记录数组
+     * @param int $chunkSize 每批插入数量
+     * @return int 总插入行数
+     * @example Db::table('users')->chunkInsert(['name' => 'a'], ['name' => 'b'], ...)
+     */
+    public static function chunkInsert(string $table, array $records, int $chunkSize = 1000): int
+    {
+        $totalInserted = 0;
+        $chunks = array_chunk($records, $chunkSize);
+
+        foreach ($chunks as $chunk) {
+            $builder = self::tableWrite($table);
+            if ($builder->insertAll($chunk)) {
+                $totalInserted += count($chunk);
+            }
+        }
+
+        return $totalInserted;
+    }
+
+    /**
+     * Upsert - 插入或更新（基于唯一键）
+     *
+     * @param string $table 表名
+     * @param array $data 插入/更新数据
+     * @param array $uniqueKeys 唯一键列表
+     * @param array $updateKeys 更新时更新的字段（默认全部）
+     * @return bool
+     * @example Db::upsert('users', ['email' => 'test@example.com', 'name' => 'test'], ['email'])
+     */
+    public static function upsert(string $table, array $data, array $uniqueKeys, array $updateKeys = []): bool
+    {
+        if (empty($data) || empty($uniqueKeys)) {
+            return false;
+        }
+
+        $exists = self::table($table)->where(function ($q) use ($uniqueKeys, $data) {
+            foreach ($uniqueKeys as $key) {
+                if (isset($data[$key])) {
+                    $q->where($key, '=', $data[$key]);
+                }
+            }
+        })->exists();
+
+        if ($exists) {
+            $where = [];
+            foreach ($uniqueKeys as $key) {
+                if (isset($data[$key])) {
+                    $where[$key] = $data[$key];
+                }
+            }
+
+            $updateData = empty($updateKeys) ? $data : array_intersect_key($data, array_flip($updateKeys));
+
+            if (!empty($updateData)) {
+                return self::tableWrite($table)->where($where)->update($updateData) > 0;
+            }
+            return false;
+        }
+
+        return self::tableWrite($table)->insert($data);
     }
 }

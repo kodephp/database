@@ -5,7 +5,7 @@
 ## 特性
 
 - **全 ORM 支持**：一对一、一对多、多对多、多态关联、预加载
-- **多数据库支持**：主从、读写分离、跨库关联查询
+- **多数据库支持**：主从、读写分离自动路由、跨库关联查询
 - **分库分表**：按年月、按哈希、按后缀、范围映射、自动路由
 - **连接池管理**：协程上下文隔离，支持 Fiber
 - **事件监听**：SQL 监听、事务事件、模型事件钩子
@@ -13,6 +13,8 @@
 - **获取器/修改器**：类型转换、属性访问
 - **软删除**：软删除恢复机制
 - **模型事件**：钩子函数、观察者模式
+- **批量操作**：Chunk 分块、Upsert、批量插入优化
+- **行锁定**：FOR UPDATE、共享锁支持
 - **兼容主流框架**：Laravel、ThinkPHP、Hyperf、Webman
 
 ## 环境要求
@@ -86,6 +88,72 @@ Db::addConnection('stock_db', [
     'username' => 'root',
     'password' => '',
 ]);
+```
+
+---
+
+## 读写分离自动路由
+
+### 启用读写分离
+
+```php
+// 配置主从数据库
+Db::setConfig([
+    'driver' => 'mysql',
+    'host' => '127.0.0.1',      // 主库 IP
+    'database' => 'main_db',
+    'username' => 'root',
+    'password' => '',
+]);
+
+Db::addConnection('slave', [
+    'driver' => 'mysql',
+    'host' => '127.0.0.2',      // 从库 IP
+    'database' => 'main_db',
+    'username' => 'root',
+    'password' => '',
+]);
+
+// 启用读写分离
+Db::enableReadWriteSplit('slave');
+```
+
+### 自动路由规则
+
+```php
+// 启用后，以下操作自动路由：
+
+// 读操作 -> 从库 (slave)
+Db::table('users')->get();           // 从库查询
+Db::table('users')->first();          // 从库查询
+Db::table('users')->find(1);          // 从库查询
+Db::table('users')->exists();         // 从库查询
+Db::table('users')->count();          // 从库查询
+Db::select('SELECT * FROM users');    // 从库查询
+
+// 写操作 -> 主库 (default)
+Db::tableWrite('users')->insert([...]); // 主库插入
+Db::tableWrite('users')->where('id', 1)->update([...]); // 主库更新
+Db::tableWrite('users')->where('id', 1)->delete();       // 主库删除
+
+// 事务自动使用主库
+Db::transaction(function () {
+    Db::table('users')->insert([...]); // 主库
+    Db::table('orders')->insert([...]); // 主库
+});
+```
+
+### 强制使用主库
+
+```php
+// 使用 tableWrite 强制使用主库进行写操作
+Db::tableWrite('users')->insert(['name' => 'test']);
+
+// 即使是读操作也可以强制使用主库
+Db::tableWrite('users')->where('id', 1)->first();
+
+// 禁用读写分离
+Db::disableReadWriteSplit();
 ```
 
 ---
@@ -416,6 +484,90 @@ Db::table('users')->where('id', '=', 1)->delete();
 
 // 批量删除
 Db::table('users')->whereIn('id', [1, 2, 3])->delete();
+```
+
+### 批量操作
+
+```php
+// Chunk 分块处理（适合大批量数据）
+Db::table('orders')->orderBy('id')->chunk(function ($orders) {
+    foreach ($orders as $order) {
+        process($order);
+    }
+}, 1000);
+
+// 游标查询（适合大结果集遍历）
+Db::table('users')->cursor(function ($user) {
+    sendEmail($user);
+}, 500);
+
+// 批量插入（自动分块）
+$records = [];
+for ($i = 0; $i < 10000; $i++) {
+    $records[] = ['name' => "user_{$i}", 'email' => "user_{$i}@example.com"];
+}
+$insertedCount = Db::chunkInsert('users', $records, 1000);
+
+// Upsert - 插入或更新（基于唯一键）
+Db::table('users')->upsert(
+    ['email' => 'test@example.com', 'name' => 'updated'],
+    ['email'],                        // 唯一键
+    ['name']                          // 更新时只更新 name 字段
+);
+
+// 批量 Upsert
+Db::table('users')->upsertAll($records, ['email']);
+
+// firstOrCreate
+$user = Db::table('users')->firstOrCreate(
+    ['email' => 'test@example.com'],
+    ['name' => 'new user']
+);
+
+// updateOrCreate
+Db::table('users')->updateOrCreate(
+    ['email' => 'test@example.com'],
+    ['name' => 'updated']
+);
+
+// 多个聚合查询
+$result = Db::table('orders')->aggregates([
+    'count' => '*',
+    'sum' => 'total',
+    'avg' => 'total',
+    'max' => 'total',
+    'min' => 'total'
+]);
+```
+
+### 行锁定
+
+```php
+// 悲观锁（FOR UPDATE）
+Db::table('users')
+    ->where('id', 1)
+    ->lock('FOR UPDATE')
+    ->first();
+
+// 共享锁
+Db::table('users')
+    ->where('id', 1)
+    ->sharedLock()
+    ->first();
+
+// 在事务中使用
+Db::transaction(function () {
+    $user = Db::table('users')
+        ->where('balance', '>=', 100)
+        ->lock('FOR UPDATE')
+        ->first();
+
+    if ($user) {
+        Db::table('users')
+            ->where('id', $user['id'])
+            ->dec('balance', 100);
+    }
+});
 ```
 
 ### 事务

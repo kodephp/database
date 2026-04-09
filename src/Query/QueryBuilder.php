@@ -25,6 +25,7 @@ class QueryBuilder
     protected ?string $primaryKey = 'id';
     protected array $joins = [];
     protected array $unionQueries = [];
+    protected ?string $lockFor = null;
 
     public function __construct(protected mixed $connection)
     {
@@ -679,6 +680,10 @@ class QueryBuilder
             $sql .= " OFFSET {$this->offset}";
         }
 
+        if ($this->lockFor !== null) {
+            $sql .= " {$this->lockFor}";
+        }
+
         foreach ($this->unionQueries as $union) {
             $sql .= " {$union['type']} {$union['query']->toSql()}";
         }
@@ -716,6 +721,284 @@ class QueryBuilder
         $this->orderDirection = 'ASC';
         $this->groupBy = null;
         $this->having = null;
+        $this->lockFor = null;
         return $this;
+    }
+
+    /**
+     * 批量查询 - 分块处理大量数据
+     *
+     * @param callable $callback 回调函数，接收一维数组记录
+     * @param int $chunkSize 每块数量
+     * @return bool
+     * @example Db::table('users')->chunk(function ($users) { foreach ($users as $user) { ... } }, 1000)
+     */
+    public function chunk(callable $callback, int $chunkSize = 1000): bool
+    {
+        $page = 1;
+
+        do {
+            $results = $this->forPage($page, $chunkSize)->get();
+            $count = count($results);
+
+            if ($count === 0) {
+                break;
+            }
+
+            if ($callback($results) === false) {
+                return false;
+            }
+
+            $page++;
+
+            if ($count < $chunkSize) {
+                break;
+            }
+        } while (true);
+
+        return true;
+    }
+
+    /**
+     * 分块查询直到条件不满足
+     *
+     * @param callable $callback 回调函数，返回 false 停止
+     * @param int $chunkSize 每块数量
+     * @return bool
+     */
+    public function chunkUntilStop(callable $callback, int $chunkSize = 1000): bool
+    {
+        return $this->chunk($callback, $chunkSize);
+    }
+
+    /**
+     * 分页查询
+     *
+     * @param int $page 页码
+     * @param int $perPage 每页数量
+     * @return static
+     */
+    public function forPage(int $page, int $perPage = 15): static
+    {
+        $this->limit($perPage);
+        $this->offset(($page - 1) * $perPage);
+        return $this;
+    }
+
+    /**
+     * 游标查询 - 适合大结果集遍历
+     *
+     * @param callable $callback 回调函数
+     * @param int $fetchSize 每次获取数量
+     * @return bool
+     * @example Db::table('users')->cursor(function ($user) { process($user); })
+     */
+    public function cursor(callable $callback, int $fetchSize = 1000): bool
+    {
+        return $this->chunk($callback, $fetchSize);
+    }
+
+    /**
+     * 批量插入（支持 chunk）
+     *
+     * @param array $records 记录数组
+     * @param int $chunkSize 分块大小
+     * @return int 成功插入的行数
+     */
+    public function insertChunk(array $records, int $chunkSize = 1000): int
+    {
+        $totalInserted = 0;
+        $chunks = array_chunk($records, $chunkSize);
+
+        foreach ($chunks as $chunk) {
+            if ($this->insertAll($chunk)) {
+                $totalInserted += count($chunk);
+            }
+        }
+
+        return $totalInserted;
+    }
+
+    /**
+     * Upsert - 插入或更新（基于唯一键）
+     *
+     * @param array $data 数据
+     * @param array $uniqueKeys 唯一键列表
+     * @param array $updateKeys 更新时更新的字段（默认全部非唯一键字段）
+     * @return bool
+     * @example Db::table('users')->upsert(['email' => 'test@example.com', 'name' => 'test'], ['email'], ['name'])
+     */
+    public function upsert(array $data, array $uniqueKeys, array $updateKeys = []): bool
+    {
+        if (empty($data) || empty($uniqueKeys)) {
+            return false;
+        }
+
+        $where = [];
+        foreach ($uniqueKeys as $key) {
+            if (isset($data[$key])) {
+                $where[$key] = $data[$key];
+            }
+        }
+
+        $exists = (bool) $this->where($where)->exists();
+
+        if ($exists) {
+            $updateData = [];
+            if (empty($updateKeys)) {
+                foreach ($data as $key => $value) {
+                    if (!in_array($key, $uniqueKeys, true)) {
+                        $updateData[$key] = $value;
+                    }
+                }
+            } else {
+                foreach ($updateKeys as $key) {
+                    if (isset($data[$key])) {
+                        $updateData[$key] = $data[$key];
+                    }
+                }
+            }
+
+            if (!empty($updateData)) {
+                return $this->where($where)->update($updateData) > 0;
+            }
+            return false;
+        }
+
+        return $this->insert($data);
+    }
+
+    /**
+     * 批量 Upsert
+     *
+     * @param array $records 记录数组
+     * @param array $uniqueKeys 唯一键列表
+     * @param array $updateKeys 更新时更新的字段
+     * @return int 成功操作数
+     */
+    public function upsertAll(array $records, array $uniqueKeys, array $updateKeys = []): int
+    {
+        $affected = 0;
+        foreach ($records as $record) {
+            if ($this->upsert($record, $uniqueKeys, $updateKeys)) {
+                $affected++;
+            }
+        }
+        return $affected;
+    }
+
+    /**
+     * 检查是否不存在
+     */
+    public function doesntExist(): bool
+    {
+        return !$this->exists();
+    }
+
+    /**
+     * 添加 where not
+     */
+    public function whereNot(string $column, mixed $operator, mixed $value = null): static
+    {
+        if ($value === null) {
+            $value = $operator;
+            $operator = '!=';
+        }
+        $this->wheres[] = "NOT {$column} {$operator} ?";
+        $this->bindings[] = $value;
+        return $this;
+    }
+
+    /**
+     * or where not
+     */
+    public function orWhereNot(string $column, mixed $operator, mixed $value = null): static
+    {
+        if ($value === null) {
+            $value = $operator;
+            $operator = '!=';
+        }
+        $this->wheres[] = "OR NOT {$column} {$operator} ?";
+        $this->bindings[] = $value;
+        return $this;
+    }
+
+    /**
+     * first or create
+     */
+    public function firstOrCreate(array $attributes, array $values = []): ?array
+    {
+        $exists = $this->where($attributes)->exists();
+
+        if ($exists) {
+            return $this->where($attributes)->first();
+        }
+
+        $data = array_merge($attributes, $values);
+        if ($this->insert($data)) {
+            return $this->where($attributes)->first();
+        }
+
+        return null;
+    }
+
+    /**
+     * update or create
+     */
+    public function updateOrCreate(array $search, array $values = []): bool
+    {
+        $exists = $this->where($search)->exists();
+
+        if ($exists) {
+            return $this->where($search)->update($values) > 0;
+        }
+
+        $data = array_merge($search, $values);
+        return $this->insert($data);
+    }
+
+    /**
+     * 聚合函数 - 多个聚合
+     *
+     * @param array $aggregates 聚合配置 ['count' => 'id', 'sum' => 'balance', 'avg' => 'score']
+     * @return array
+     * @example Db::table('users')->aggregates(['count' => '*', 'sum' => 'balance', 'avg' => 'score'])
+     */
+    public function aggregates(array $aggregates): array
+    {
+        $result = [];
+
+        foreach ($aggregates as $func => $column) {
+            $result[$func . '_' . $column] = match (strtolower($func)) {
+                'count' => $this->count($column),
+                'sum' => $this->sum($column),
+                'avg' => $this->avg($column),
+                'max' => $this->max($column),
+                'min' => $this->min($column),
+                default => 0,
+            };
+        }
+
+        return $result;
+    }
+
+    /**
+     * 锁定行
+     *
+     * @param string $type 锁定类型 (FOR UPDATE, LOCK IN SHARE MODE)
+     * @return static
+     */
+    public function lock(string $type = 'FOR UPDATE'): static
+    {
+        $this->lockFor = $type;
+        return $this;
+    }
+
+    /**
+     * 共享锁
+     */
+    public function sharedLock(): static
+    {
+        return $this->lock('LOCK IN SHARE MODE');
     }
 }
