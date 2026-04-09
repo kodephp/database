@@ -4,13 +4,13 @@
 
 ## 特性
 
+- **双风格支持**：Laravel 风格 + ThinkPHP 风格
 - **全 ORM 支持**：一对一、一对多、多对多、多态关联
 - **连接池管理**：协程上下文隔离，支持 Fiber
 - **事件监听**：SQL 监听、事务事件
 - **Schema 定义**：表结构构建器
 - **获取器/修改器**：类型转换、属性访问
 - **软删除**：软删除恢复机制
-- **兼容主流框架**：Laravel、ThinkPHP、Hyperf、Webman
 
 ## 环境要求
 
@@ -23,47 +23,163 @@
 composer require kode/database
 ```
 
-## 快速开始
-
-### 配置
+## 配置
 
 ```php
 use Kode\Database\Db\Db;
 
 Db::setConfig([
-    'driver' => 'laravel',
+    'driver' => 'laravel',  // 或 'thinkphp'
     'host' => '127.0.0.1',
     'port' => 3306,
     'database' => 'test',
     'username' => 'root',
     'password' => '',
-    'pool' => ['max' => 10, 'min' => 2]
+    'pool' => ['max' => 10, 'min' => 2]  // 连接池配置
 ]);
 ```
 
-### Db 静态调用（Webman 风格）
+---
+
+## 查询构建器用法
+
+### Laravel 风格
 
 ```php
 use Kode\Database\Db\Db;
 
-// 查询构建
-Db::table('users')->where('status', '=', 1)->orderBy('id', 'DESC')->limit(10)->get();
-Db::table('users')->select()->first();
+// 获取所有
+Db::table('users')->get();
 
-// 原生 SQL
+// 获取第一条
+Db::table('users')->first();
+
+// 通过主键查找
+Db::table('users')->find(1);
+
+// 选择列 + 获取
+Db::table('users')->select('name', 'email')->get();
+Db::table('users')->select('name, email')->get();  // 逗号分隔字符串
+
+// where 条件
+Db::table('users')->where('status', '=', 1)->get();
+Db::table('users')->where('status', 1)->get();      // 简写
+Db::table('users')->whereIn('id', [1, 2, 3])->get();
+Db::table('users')->whereNull('deleted_at')->get();
+
+// 排序分页
+Db::table('users')->orderBy('id', 'DESC')->limit(10)->get();
+Db::table('users')->offset(10)->limit(10)->get();
+
+// 聚合
+Db::table('users')->count();
+Db::table('users')->sum('balance');
+
+// 插入
+Db::table('users')->insert(['name' => 'test']);
+Db::table('users')->insertAll([['name' => 'a'], ['name' => 'b']]);
+
+// 更新
+Db::table('users')->where('id', '=', 1)->update(['name' => 'newname']);
+
+// 删除
+Db::table('users')->where('id', '=', 1)->delete();
+
+// 分页
+Db::table('users')->paginate(1, 15);
+```
+
+### ThinkPHP 风格
+
+```php
+use Kode\Database\Db\Db;
+
+// 获取所有
+Db::table('users')->select();
+
+// 获取第一条
+Db::table('users')->find();
+
+// 通过主键查找
+Db::table('users')->find(1);
+
+// 选择列
+Db::table('users')->field('name, email')->select();
+Db::table('users')->field(['name', 'email'])->select();
+
+// where 条件
+Db::table('users')->where('status', '=', 1)->select();
+Db::table('users')->where('status', 1)->select();
+Db::table('users')->whereIn('id', [1, 2, 3])->select();
+Db::table('users')->whereNull('deleted_at')->select();
+
+// 排序分页
+Db::table('users')->order('id DESC')->limit(10)->select();
+Db::table('users')->page(1, 15)->select();
+
+// 聚合
+Db::table('users')->count();
+Db::table('users')->sum('balance');
+
+// 插入
+Db::table('users')->insert(['name' => 'test']);
+Db::table('users')->insertAll([['name' => 'a'], ['name' => 'b']]);
+
+// 更新
+Db::table('users')->where('id', '=', 1)->update(['name' => 'newname']);
+
+// 删除
+Db::table('users')->where('id', '=', 1)->delete();
+
+// 分页
+Db::table('users')->paginate(15);
+```
+
+---
+
+## 原生 SQL
+
+```php
+// 查询
 Db::select('SELECT * FROM users WHERE id = ?', [1]);
+
+// 插入
 Db::insert('INSERT INTO users (name) VALUES (?)', ['test']);
+
+// 更新
 Db::update('UPDATE users SET name = ? WHERE id = ?', ['test', 1]);
+
+// 删除
 Db::delete('DELETE FROM users WHERE id = ?', [1]);
 
-// 事务
+// 语句
+Db::statement('DROP TABLE IF EXISTS users');
+```
+
+---
+
+## 事务
+
+```php
 Db::transaction(function () {
     Db::table('users')->insert(['name' => 'test']);
     Db::table('accounts')->insert(['user_id' => 1, 'balance' => 100]);
 });
+
+// 手动控制
+Db::beginTransaction();
+try {
+    // ...
+    Db::commit();
+} catch (\Throwable $e) {
+    Db::rollback();
+    throw $e;
+}
 ```
 
-### Model 模型（Hyperf/Laravel 风格）
+---
+
+## Model 模型
 
 ```php
 use Kode\Database\Model\Model;
@@ -75,16 +191,20 @@ class User extends Model
     protected array $fillable = ['name', 'email', 'status'];
     protected array $guarded = ['password'];
     protected bool $timestamps = true;
-    protected string $dateFormat = 'Y-m-d H:i:s';
 }
+```
 
+### 增删改查
+
+```php
 // 查找
-$user = User::find(1);
-$user = User::findOrFail(1);
-$user = User::first();
+User::find(1);           // 通过主键
+User::findOrFail(1);     // 不存在则抛异常
+User::first();           // 第一条
+User::all();             // 所有
 
 // 创建
-$user = User::create(['name' => 'test', 'email' => 'test@example.com']);
+User::create(['name' => 'test', 'email' => 'test@example.com']);
 
 // 更新
 $user = User::find(1);
@@ -93,72 +213,54 @@ $user->save();
 
 // 删除
 $user->delete();
-$user->forceDelete();
+$user->forceDelete();   // 硬删除
 
 // 查找或创建
 User::firstOrCreate(['email' => 'test@test.com'], ['name' => 'new']);
+User::updateOrCreate(['email' => 'test@test.com'], ['name' => 'updated']);
 ```
+
+### 查询构建
+
+```php
+User::query()->where('status', '=', 1)->get();
+User::query()->whereIn('id', [1, 2, 3])->get();
+User::query()->orderBy('id', 'DESC')->limit(10)->get();
+User::query()->paginate(1, 15);
+
+// 聚合
+User::count();
+User::sum('balance');
+```
+
+---
 
 ## 关联关系
 
-### 一对一（正向）
-
 ```php
 class User extends Model
 {
-    public function profile(): \Kode\Database\Model\Relation\HasOne
-    {
+    // 一对一（正向）
+    public function profile() {
         return $this->hasOne(Profile::class);
     }
-}
 
-$user = User::find(1);
-$profile = $user->profile;
-```
-
-### 一对多
-
-```php
-class User extends Model
-{
-    public function posts(): \Kode\Database\Model\Relation\HasMany
-    {
+    // 一对多
+    public function posts() {
         return $this->hasMany(Post::class);
     }
-}
 
-$user = User::find(1);
-$posts = $user->posts;
-```
-
-### 属于（反向一对一）
-
-```php
-class Profile extends Model
-{
-    public function user(): \Kode\Database\Model\Relation\BelongsTo
-    {
-        return $this->belongsTo(User::class);
-    }
-}
-```
-
-### 多对多
-
-```php
-class User extends Model
-{
-    public function roles(): \Kode\Database\Model\Relation\BelongsToMany
-    {
+    // 多对多
+    public function roles() {
         return $this->belongsToMany(Role::class);
     }
 }
 
-// 关联操作
+// 使用
+$user = User::find(1);
+$profile = $user->profile;
+$posts = $user->posts;
 $user->roles()->attach($roleId);
-$user->roles()->detach($roleId);
-$user->roles()->sync([1, 2, 3]);
-$user->roles()->toggle([1, 2]);
 ```
 
 ### 多态关联
@@ -166,40 +268,20 @@ $user->roles()->toggle([1, 2]);
 ```php
 class Comment extends Model
 {
-    public function commentable(): \Kode\Database\Model\Relation\MorphTo
-    {
+    public function commentable() {
         return $this->morphTo();
     }
 }
 
 class Post extends Model
 {
-    public function comments(): \Kode\Database\Model\Relation\MorphMany
-    {
+    public function comments() {
         return $this->morphMany(Comment::class, 'commentable');
     }
 }
 ```
 
-## 查询构建
-
-```php
-// where 条件
-User::where('status', '=', 1)->get();
-User::where('status', 1)->get();
-User::whereIn('id', [1, 2, 3])->get();
-User::whereNull('deleted_at')->get();
-
-// 聚合函数
-User::count();
-User::sum('balance');
-User::avg('balance');
-User::max('balance');
-User::min('balance');
-
-// 分页
-User::paginate(1, 15);
-```
+---
 
 ## 获取器/修改器
 
@@ -209,11 +291,7 @@ class User extends Model
     // 获取器
     public function getStatusTextAttribute(): string
     {
-        return match ($this->status) {
-            1 => '启用',
-            0 => '禁用',
-            default => '未知',
-        };
+        return $this->status === 1 ? '启用' : '禁用';
     }
 
     // 修改器
@@ -231,83 +309,72 @@ class User extends Model
 }
 ```
 
+---
+
 ## 软删除
 
 ```php
 class User extends Model
 {
     use \Kode\Database\Model\Concerns\SoftDeletes;
-
     protected string $softDeleteField = 'deleted_at';
 }
 
 $user->delete();       // 软删除
-$user->forceDelete();   // 硬删除
-$user->restore();       // 恢复
+$user->forceDelete();  // 硬删除
+$user->restore();     // 恢复
 ```
+
+---
 
 ## Schema 表结构
 
 ```php
 use Kode\Database\Schema\Schema;
 
-$sql = Schema::create('users', function (Schema $table) {
+// 创建表
+Schema::create('users', function (Schema $table) {
     $table->id();
     $table->string('name');
     $table->string('email')->unique();
     $table->string('password');
-    $table->integer('age');
-    $table->boolean('is_active')->default(true);
-    $table->decimal('balance', 10, 2)->default(0);
-    $table->text('bio');
-    $table->json('options');
     $table->timestamps();
     $table->softDeletes();
-
-    // 索引
-    $table->index(['user_id', 'created_at']);
-
-    // 外键
-    $table->foreign('user_id')
-        ->references('id')
-        ->on('users')
-        ->onDelete('cascade');
 });
+
+// 修改表
+Schema::table('users', function (Schema $table) {
+    $table->string('phone', 20);
+    $table->index('phone');
+});
+
+// 删除表
+Schema::drop('users');
 ```
 
-## 事件监听
+---
 
-### SQL 监听
+## 事件监听
 
 ```php
 use Kode\Database\Event\EventManager;
 use Kode\Database\Event\SqlListener;
 use Kode\Database\Event\SqlEvent;
 
+// 注册 SQL 监听器
 $listener = new SqlListener();
 EventManager::getInstance()->listen(SqlEvent::class, $listener);
 
-Db::table('users')->select()->get();
+// 执行查询
+Db::table('users')->get();
 
+// 获取监听的 SQL
 $sqls = $listener->getSqls();
+$lastSql = $listener->getLastSql();
 $listener->clear();
 ```
 
-### 事务事件
-
-```php
-use Kode\Database\Event\EventManager;
-use Kode\Database\Event\TransactionBeginEvent;
-use Kode\Database\Event\TransactionCommitEvent;
-
-EventManager::getInstance()->listen(TransactionBeginEvent::class, function ($event) {
-    echo "事务开始\n";
-});
-
-EventManager::getInstance()->listen(TransactionCommitEvent::class, function ($event) {
-    echo "事务提交\n";
-});
-```
+---
 
 ## 多进程/多线程/协程支持
 
@@ -315,10 +382,8 @@ EventManager::getInstance()->listen(TransactionCommitEvent::class, function ($ev
 
 ```php
 $fiber = new Fiber(function () {
-    Db::setConfig([...]);
-    return Db::table('users')->where('status', 1)->select()->get();
+    return Db::table('users')->where('status', 1)->get();
 });
-
 $result = $fiber->start();
 ```
 
@@ -329,8 +394,8 @@ use Kode\Parallel\Parallel;
 
 $parallel = new Parallel();
 $results = $parallel->wait([
-    fn() => Db::table('users')->select()->get(),
-    fn() => Db::table('orders')->select()->get(),
+    fn() => Db::table('users')->get(),
+    fn() => Db::table('orders')->get(),
 ]);
 ```
 
@@ -339,12 +404,11 @@ $results = $parallel->wait([
 ```php
 use Kode\Process\Pool;
 
-$pool = Pool::create(function () {
-    return new \Kode\Database\Pool\ConnectionPool($config);
-});
-
+$pool = Pool::create(fn() => new \Kode\Database\Pool\ConnectionPool($config));
 $results = $pool->map(fn($worker) => $worker->query('SELECT 1'));
 ```
+
+---
 
 ## 连接池管理
 
@@ -352,28 +416,15 @@ $results = $pool->map(fn($worker) => $worker->query('SELECT 1'));
 use Kode\Database\Pool\PoolManager;
 
 PoolManager::init($config, 'default');
-
 $connection = PoolManager::getConnection();
 
-// 在 Fiber 中自动隔离
+// Fiber 中自动隔离
 if (class_exists(\Fiber::class)) {
     $fiberId = \Fiber::getCurrent()->getId();
-    // 每个 Fiber 有独立连接
 }
 ```
 
-## Kode 系列包集成
-
-| 包名 | 用途 |
-|------|------|
-| `kode/di` | 依赖注入 |
-| `kode/context` | 协程/进程上下文传递 |
-| `kode/fibers` | Fiber 协程支持 |
-| `kode/parallel` | 并行查询 |
-| `kode/process` | 进程池管理 |
-| `kode/cache` | 查询结果缓存 |
-| `kode/event` | 事件监听 |
-| `kode/exception` | 统一异常处理 |
+---
 
 ## 项目结构
 
@@ -384,12 +435,14 @@ src/
 ├── Event/          # 事件系统
 ├── Exception/      # 异常类
 ├── Model/          # 模型基类
-│   ├── Concerns/  # Traits
+│   ├── Concerns/   # Traits
 │   └── Relation/   # 关联类
 ├── Pool/           # 连接池
 ├── Query/          # 查询构建器
 └── Schema/         # 表结构
 ```
+
+---
 
 ## License
 

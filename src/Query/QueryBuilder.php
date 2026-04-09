@@ -46,16 +46,41 @@ class QueryBuilder
     }
 
     /**
-     * 设置查询列（不执行，等待 get/first/find 触发）
+     * 设置查询列
+     * Laravel 风格: Db::table('users')->select('name', 'email')->get()
+     * ThinkPHP 风格: Db::table('users')->field('name, email')->select()
      */
     public function select(array|string ...$columns): static
     {
-        if (count($columns) === 1 && is_array($columns[0])) {
-            $this->columns = $columns[0];
-        } else {
-            $this->columns = $columns;
+        if (count($columns) === 1 && is_string($columns[0]) && strpos($columns[0], ',') !== false) {
+            $columns = array_map('trim', explode(',', $columns[0]));
         }
+        $this->columns = $columns;
         return $this;
+    }
+
+    /**
+     * 设置查询字段（ThinkPHP 风格）
+     *
+     * @example Db::table('users')->field('name, email')->select()
+     */
+    public function field(string|array $columns): static
+    {
+        if (is_string($columns)) {
+            $columns = array_map('trim', explode(',', $columns));
+        }
+        $this->columns = $columns;
+        return $this;
+    }
+
+    /**
+     * 执行查询（ThinkPHP 风格）
+     *
+     * @example Db::table('users')->field('name, email')->select()
+     */
+    public function selectQuery(): array
+    {
+        return $this->get();
     }
 
     /**
