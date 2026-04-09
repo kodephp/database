@@ -309,14 +309,12 @@ class Db
 
     /**
      * 清除连接池
+     *
+     * @param string|null $name 连接名称（暂不支持，仅清除全部）
      */
     public static function clearPool(?string $name = null): void
     {
-        if ($name !== null) {
-            PoolManager::clear($name);
-        } else {
-            PoolManager::clear();
-        }
+        PoolManager::clear();
     }
 
     /**
@@ -421,12 +419,10 @@ class Db
      * 重新连接
      *
      * @param string|null $name 连接名称
-     * @return void
      */
     public static function reconnect(?string $name = null): void
     {
-        $name = $name ?? self::$defaultConnection;
-        PoolManager::clear($name);
+        PoolManager::clear();
     }
 
     /**
@@ -709,4 +705,251 @@ class Db
 
     /** @var string|null 最后执行的 SQL */
     protected static ?string $lastSql = null;
+
+    /**
+     * 获取所有表名
+     *
+     * @return array
+     */
+    public static function getTables(): array
+    {
+        $config = self::$config;
+        $database = $config['database'] ?? '';
+        $result = self::select(
+            "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_TYPE = 'BASE TABLE'",
+            [$database]
+        );
+        return array_column($result, 'TABLE_NAME');
+    }
+
+    /**
+     * 获取所有视图名
+     *
+     * @return array
+     */
+    public static function getViews(): array
+    {
+        $config = self::$config;
+        $database = $config['database'] ?? '';
+        $result = self::select(
+            "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.VIEWS WHERE TABLE_SCHEMA = ?",
+            [$database]
+        );
+        return array_column($result, 'TABLE_NAME');
+    }
+
+    /**
+     * 获取所有数据库名
+     *
+     * @return array
+     */
+    public static function getDatabases(): array
+    {
+        $result = self::select("SELECT SCHEMA_NAME as Database FROM INFORMATION_SCHEMA.SCHEMATA");
+        return array_column($result, 'Database');
+    }
+
+    /**
+     * 获取表索引信息
+     *
+     * @param string $table 表名
+     * @return array
+     */
+    public static function getIndexes(string $table): array
+    {
+        $config = self::$config;
+        $database = $config['database'] ?? '';
+        return self::select(
+            "SELECT INDEX_NAME, COLUMN_NAME, NON_UNIQUE FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? ORDER BY INDEX_NAME, SEQ_IN_INDEX",
+            [$database, $table]
+        );
+    }
+
+    /**
+     * 获取表外键信息
+     *
+     * @param string $table 表名
+     * @return array
+     */
+    public static function getForeignKeys(string $table): array
+    {
+        $config = self::$config;
+        $database = $config['database'] ?? '';
+        return self::select(
+            "SELECT CONSTRAINT_NAME, COLUMN_NAME, REFERENCED_TABLE_NAME, REFERENCED_COLUMN_NAME FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND REFERENCED_TABLE_NAME IS NOT NULL",
+            [$database, $table]
+        );
+    }
+
+    /**
+     * 执行 SQL 文件
+     *
+     * @param string $filePath SQL 文件路径
+     * @return array 执行结果
+     */
+    public static function executeFile(string $filePath): array
+    {
+        if (!file_exists($filePath)) {
+            return ['success' => false, 'error' => 'File not found: ' . $filePath];
+        }
+
+        $sql = file_get_contents($filePath);
+        $statements = array_filter(array_map('trim', explode(';', $sql)));
+
+        $results = [];
+        foreach ($statements as $statement) {
+            if (empty($statement)) {
+                continue;
+            }
+            try {
+                self::statement($statement);
+                $results[] = ['sql' => substr($statement, 0, 50) . '...', 'success' => true];
+            } catch (\Throwable $e) {
+                $results[] = ['sql' => substr($statement, 0, 50) . '...', 'success' => false, 'error' => $e->getMessage()];
+            }
+        }
+
+        return $results;
+    }
+
+    /**
+     * 重建表
+     *
+     * @param string $table 表名
+     * @return bool
+     */
+    public static function rebuildTable(string $table): bool
+    {
+        try {
+            self::statement("REPAIR TABLE {$table}");
+            return true;
+        } catch (\Throwable) {
+            return false;
+        }
+    }
+
+    /**
+     * 优化表
+     *
+     * @param string $table 表名
+     * @return bool
+     */
+    public static function optimizeTable(string $table): bool
+    {
+        try {
+            self::statement("OPTIMIZE TABLE {$table}");
+            return true;
+        } catch (\Throwable) {
+            return false;
+        }
+    }
+
+    /**
+     * 分析表
+     *
+     * @param string $table 表名
+     * @return bool
+     */
+    public static function analyzeTable(string $table): bool
+    {
+        try {
+            self::statement("ANALYZE TABLE {$table}");
+            return true;
+        } catch (\Throwable) {
+            return false;
+        }
+    }
+
+    /**
+     * 检查表状态
+     *
+     * @param string $table 表名
+     * @return array|null
+     */
+    public static function getTableStatus(string $table): ?array
+    {
+        $config = self::$config;
+        $database = $config['database'] ?? '';
+        $result = self::select(
+            "SELECT TABLE_NAME, ENGINE, TABLE_ROWS, DATA_LENGTH, INDEX_LENGTH, AUTO_INCREMENT FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?",
+            [$database, $table]
+        );
+        return $result[0] ?? null;
+    }
+
+    /**
+     * 获取数据库大小
+     *
+     * @return int bytes
+     */
+    public static function getDatabaseSize(): int
+    {
+        $config = self::$config;
+        $database = $config['database'] ?? '';
+        $result = self::select(
+            "SELECT SUM(DATA_LENGTH + INDEX_LENGTH) as size FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = ?",
+            [$database]
+        );
+        return (int) ($result[0]['size'] ?? 0);
+    }
+
+    /**
+     * 获取表大小
+     *
+     * @param string $table 表名
+     * @return int bytes
+     */
+    public static function getTableSize(string $table): int
+    {
+        $status = self::getTableStatus($table);
+        if ($status) {
+            return (int) ($status['DATA_LENGTH'] ?? 0) + (int) ($status['INDEX_LENGTH'] ?? 0);
+        }
+        return 0;
+    }
+
+    /**
+     * 格式化字节大小
+     *
+     * @param int $bytes 字节
+     * @return string
+     */
+    public static function formatBytes(int $bytes): string
+    {
+        $units = ['B', 'KB', 'MB', 'GB', 'TB', 'PB'];
+        $i = 0;
+        while ($bytes >= 1024 && $i < count($units) - 1) {
+            $bytes /= 1024;
+            $i++;
+        }
+        return round($bytes, 2) . ' ' . $units[$i];
+    }
+
+    /**
+     * 关闭所有连接
+     */
+    public static function closeAllConnections(): void
+    {
+        PoolManager::clear();
+    }
+
+    /**
+     * 设置查询日志
+     *
+     * @param bool $enabled 是否启用
+     */
+    public static function enableQueryLog(bool $enabled = true): void
+    {
+        // 日志功能预留接口
+    }
+
+    /**
+     * 获取查询日志
+     *
+     * @return array
+     */
+    public static function getQueryLog(): array
+    {
+        return [];
+    }
 }

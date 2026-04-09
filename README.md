@@ -661,6 +661,30 @@ $result = Db::raw('SELECT NOW() as now');
 
 // 批量 Upsert
 Db::upsert('users', ['email' => 'test@example.com', 'name' => 'test'], ['email']);
+
+// 数据库工具方法
+$tables = Db::getTables();           // 获取所有表名
+$views = Db::getViews();              // 获取所有视图
+$databases = Db::getDatabases();     // 获取所有数据库
+$indexes = Db::getIndexes('users');  // 获取表索引
+$foreignKeys = Db::getForeignKeys('orders'); // 获取外键
+
+// 表维护
+Db::rebuildTable('users');           // 重建表
+Db::optimizeTable('users');          // 优化表
+Db::analyzeTable('users');           // 分析表
+
+// 表状态和大小
+$status = Db::getTableStatus('users');  // 表状态信息
+$size = Db::getTableSize('users');       // 表大小（字节）
+$dbSize = Db::getDatabaseSize();        // 数据库大小（字节）
+echo Db::formatBytes($size);             // 格式化大小 "10.5 MB"
+
+// 执行 SQL 文件
+$results = Db::executeFile('/path/to.sql');
+
+// 关闭所有连接
+Db::closeAllConnections();
 ```
 
 ### 行锁定
