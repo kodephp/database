@@ -23,6 +23,8 @@ class QueryBuilder
     protected ?string $groupBy = null;
     protected ?string $having = null;
     protected ?string $primaryKey = 'id';
+    protected array $joins = [];
+    protected array $unionQueries = [];
 
     public function __construct(protected mixed $connection)
     {
@@ -189,6 +191,57 @@ class QueryBuilder
     }
 
     /**
+     * 多个排序
+     */
+    public function orderByRaw(string $sql): static
+    {
+        $this->orderBy = $sql;
+        return $this;
+    }
+
+    /**
+     * Join 连接
+     */
+    public function join(string $table, string $first, string $operator, string $second, string $type = 'INNER'): static
+    {
+        $this->joins[] = "{$type} JOIN {$table} ON {$first} {$operator} {$second}";
+        return $this;
+    }
+
+    /**
+     * Left Join
+     */
+    public function leftJoin(string $table, string $first, string $operator, string $second): static
+    {
+        return $this->join($table, $first, $operator, $second, 'LEFT');
+    }
+
+    /**
+     * Right Join
+     */
+    public function rightJoin(string $table, string $first, string $operator, string $second): static
+    {
+        return $this->join($table, $first, $operator, $second, 'RIGHT');
+    }
+
+    /**
+     * Union 查询
+     */
+    public function union(QueryBuilder $query, string $type = 'UNION'): static
+    {
+        $this->unionQueries[] = ['query' => $query, 'type' => $type];
+        return $this;
+    }
+
+    /**
+     * Union All
+     */
+    public function unionAll(QueryBuilder $query): static
+    {
+        return $this->union($query, 'UNION ALL');
+    }
+
+    /**
      * 分组
      */
     public function groupBy(string $column): static
@@ -250,6 +303,21 @@ class QueryBuilder
     {
         $results = $this->select([$column])->get();
         return array_column($results, $column);
+    }
+
+    /**
+     * 检查记录是否存在
+     */
+    public function exists(): bool
+    {
+        $this->limit(1);
+        $sql = $this->buildSelect();
+        try {
+            $result = $this->connection->select($sql, $this->bindings);
+            return !empty($result);
+        } catch (\Throwable) {
+            return false;
+        }
     }
 
     /**
@@ -571,6 +639,10 @@ class QueryBuilder
             $this->table
         );
 
+        if (!empty($this->joins)) {
+            $sql .= ' ' . implode(' ', $this->joins);
+        }
+
         if (!empty($this->wheres)) {
             $sql .= ' WHERE ' . implode(' AND ', $this->wheres);
         }
@@ -584,7 +656,10 @@ class QueryBuilder
         }
 
         if ($this->orderBy) {
-            $sql .= " ORDER BY {$this->orderBy} {$this->orderDirection}";
+            $sql .= " ORDER BY {$this->orderBy}";
+            if ($this->orderDirection !== 'ASC' && $this->orderDirection !== 'DESC') {
+                $sql .= " {$this->orderDirection}";
+            }
         }
 
         if ($this->limit !== null) {
@@ -593,6 +668,10 @@ class QueryBuilder
 
         if ($this->offset !== null) {
             $sql .= " OFFSET {$this->offset}";
+        }
+
+        foreach ($this->unionQueries as $union) {
+            $sql .= " {$union['type']} {$union['query']->toSql()}";
         }
 
         return $sql;
