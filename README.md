@@ -944,7 +944,19 @@ $user = User::find(1);
 $shardingCount = $user->getShardingCount();     // 获取分片数量
 $shardingStrategy = $user->getShardingStrategy(); // 获取分片策略
 $connectionName = $user->getConnectionName();     // 获取连接名称
-```
+
+// Model 便捷静态方法
+$exists = User::checkExists(['email' => 'test@example.com']); // 检查记录是否存在
+$record = User::one(['id' => 1]);                // 获取单条记录
+$record = User::findOrCreate(['email' => 'new@example.com'], ['name' => 'New']); // 查找或创建
+User::updateOrCreate(['email' => 'test@example.com'], ['name' => 'Updated']); // 更新或创建
+$records = User::findBy([1, 2, 3], 'id');       // 批量查找
+$count = User::countBy(['status' => 1]);       // 条件计数
+$hasRecord = User::has(['email' => 'test@example.com']); // 判断是否存在
+$className = User::getClassName();              // 获取模型类名
+$prefix = User::getTablePrefix();              // 获取表前缀
+$values = User::values('name', ['status' => 1]); // 获取单个字段值列表
+$paginator = User::page(1, 15, ['status' => 1]); // 分页查询
 
 ### Model 跨库操作
 
@@ -1366,6 +1378,41 @@ $sql = Schema::hasTable('users');
 
 // 判断字段是否存在
 $sql = Schema::hasColumn('users', 'email');
+```
+
+### Connection 连接类
+
+```php
+use Kode\Database\Db\Connection;
+
+// 创建连接实例
+$conn = new Connection('mysql');  // 使用默认配置
+$conn = new Connection('mysql', 'database_name'); // 指定数据库
+
+// 获取查询构建器
+$builder = $conn->query();
+
+// 执行查询
+$results = $conn->select('SELECT * FROM users WHERE status = ?', [1]);
+$count = $conn->count('SELECT COUNT(*) FROM users');
+
+// 执行 SQL
+$conn->statement('INSERT INTO users (name) VALUES (?)', ['test']);
+
+// 切换数据库
+$conn->useDatabase('another_database');
+
+// 获取表全名（带数据库前缀）
+$fullTableName = $conn->qualify('users');  // `database_name`.`users`
+
+// 获取数据库名
+$dbName = $conn->getDatabaseName();  // database_name
+
+// 克隆连接
+$conn2 = $conn->copy();
+
+// 原生查询
+$results = $conn->raw('SELECT * FROM users', []);
 ```
 
 ---

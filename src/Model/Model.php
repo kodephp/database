@@ -1262,4 +1262,153 @@ abstract class Model implements ArrayAccess, JsonSerializable
             ->groupBy($field)
             ->get();
     }
+
+    /**
+     * 获取单条记录
+     *
+     * @param array $conditions 条件
+     * @return static|null
+     */
+    public static function one(array $conditions): ?static
+    {
+        return static::where($conditions)->first();
+    }
+
+    /**
+     * 获取单个字段值列表
+     *
+     * @param string $field 字段名
+     * @param array|null $conditions 条件
+     * @return array
+     */
+    public static function values(string $field, ?array $conditions = null): array
+    {
+        $query = static::where($conditions ?? []);
+        return $query->pluck($field);
+    }
+
+    /**
+     * 分页查询（静态方法）
+     *
+     * @param int $page 页码
+     * @param int $perPage 每页数量
+     * @param array $conditions 条件
+     * @param string $orderField 排序字段
+     * @param string $orderDirection 排序方向
+     * @return array
+     */
+    public static function page(int $page = 1, int $perPage = 15, array $conditions = [], string $orderField = 'id', string $orderDirection = 'DESC'): array
+    {
+        $query = static::where($conditions);
+        return $query->orderBy($orderField, $orderDirection)->paginate($page, $perPage);
+    }
+
+    /**
+     * 简化分页（静态方法）
+     *
+     * @param int $page 页码
+     * @param int $perPage 每页数量
+     * @param array $conditions 条件
+     * @return array
+     */
+    public static function simplePage(int $page = 1, int $perPage = 15, array $conditions = []): array
+    {
+        $query = static::where($conditions);
+        return $query->simplePaginate($page, $perPage);
+    }
+
+    /**
+     * 批量创建（静态方法）
+     *
+     * @param array $records 记录数组
+     * @param int $chunkSize 分块大小
+     * @return int 成功数量
+     */
+    public static function createBatch(array $records, int $chunkSize = 1000): int
+    {
+        return static::insertBatch($records, $chunkSize);
+    }
+
+    /**
+     * 查找或创建（静态方法）
+     *
+     * @param array $attributes 创建条件
+     * @param array $values 创建数据
+     * @return static
+     */
+    public static function findOrCreate(array $attributes, array $values = []): static
+    {
+        $instance = static::where($attributes)->first();
+
+        if ($instance) {
+            return $instance;
+        }
+
+        return static::create(array_merge($attributes, $values));
+    }
+
+    /**
+     * 批量查找（基于指定字段）
+     *
+     * @param array $values 值数组
+     * @param string $field 字段名
+     * @return array
+     */
+    public static function findBy(array $values, string $field = 'id'): array
+    {
+        if (empty($values)) {
+            return [];
+        }
+
+        $instance = new static();
+        return \Kode\Database\Db\Db::table($instance->table)
+            ->whereIn($field, $values)
+            ->get();
+    }
+
+    /**
+     * 条件计数
+     *
+     * @param array $conditions 条件
+     * @return int
+     */
+    public static function countBy(array $conditions): int
+    {
+        return static::where($conditions)->count();
+    }
+
+    /**
+     * 判断是否存在（静态方法）
+     *
+     * @param array $conditions 条件
+     * @return bool
+     */
+    public static function has(array $conditions): bool
+    {
+        return static::exists($conditions);
+    }
+
+    /**
+     * 获取模型类名
+     *
+     * @return string
+     */
+    public static function getClassName(): string
+    {
+        return static::class;
+    }
+
+    /**
+     * 获取表前缀
+     *
+     * @return string
+     */
+    public static function getTablePrefix(): string
+    {
+        $instance = new static();
+        if (preg_match('/^(\w+)_/', $instance->table, $matches)) {
+            return $matches[1];
+        }
+        return '';
+    }
 }

@@ -163,10 +163,13 @@ class Connection
      */
     public function getConnection(): mixed
     {
-        if (!empty(Db::getConfig($this->name)['pool'])) {
+        $config = Db::getConfig($this->name);
+
+        if (!empty($config['pool'])) {
             $connection = PoolManager::getConnection($this->name);
         } else {
-            $connection = PoolManager::getConnection($this->name);
+            $factory = new \Kode\Database\Connection\ConnectionFactory();
+            $connection = $factory->make($config);
         }
 
         if ($this->database !== null) {
@@ -222,5 +225,61 @@ class Connection
     {
         $this->database = $database;
         return $this;
+    }
+
+    /**
+     * 获取表名（带数据库前缀）
+     *
+     * @param string $table 表名
+     * @return string
+     */
+    public function qualify(string $table): string
+    {
+        if ($this->database !== null) {
+            return "`{$this->database}`.`{$table}`";
+        }
+        return "`{$table}`";
+    }
+
+    /**
+     * 获取查询构建器（带数据库上下文）
+     *
+     * @return QueryBuilder
+     */
+    public function query(): QueryBuilder
+    {
+        return new QueryBuilder($this->getConnection());
+    }
+
+    /**
+     * 执行原始查询
+     *
+     * @param string $sql SQL 语句
+     * @param array $bindings 参数
+     * @return array
+     */
+    public function raw(string $sql, array $bindings = []): array
+    {
+        return $this->select($sql, $bindings);
+    }
+
+    /**
+     * 获取数据库名
+     *
+     * @return string|null
+     */
+    public function getDatabaseName(): ?string
+    {
+        return $this->database;
+    }
+
+    /**
+     * 克隆连接（保留配置）
+     *
+     * @return static
+     */
+    public function copy(): static
+    {
+        return new static($this->name, $this->database);
     }
 }
