@@ -517,6 +517,17 @@ Db::table('users')->sum('balance');
 Db::table('users')->avg('score');
 Db::table('users')->max('price');
 Db::table('users')->min('price');
+
+// 便捷方法
+Db::table('users')->limitBy(10)->get();        // 限制数量
+Db::table('users')->take(10)->get();           // 取前 N 条（limit 别名）
+Db::table('users')->skip(10)->take(10)->get(); // 跳过 N 条
+Db::table('users')->pluck('name');             // 获取单列值列表
+Db::table('users')->lists('id', 'name');       // 获取键值对
+
+// 调试方法
+Db::table('users')->where('id', 1)->dump();   // 打印 SQL 和 bindings
+Db::table('users')->where('id', 1)->dd();      // 打印并终止
 ```
 
 ### 表连接 (JOIN)
@@ -614,6 +625,15 @@ Db::table('users')->updateOrCreate(
     ['name' => 'updated']
 );
 
+// 插入或忽略（唯一键冲突时忽略）
+Db::table('users')->insertOrIgnore(['email' => 'test@example.com', 'name' => 'test']);
+
+// 条件更新
+Db::table('users')->updateIf(['status' => 1], fn($q) => $q->where('id', '>', 10));
+
+// 条件删除
+Db::table('users')->deleteIf(fn($q) => $q->where('status', 0));
+
 // 多个聚合查询
 $result = Db::table('orders')->aggregates([
     'count' => '*',
@@ -685,6 +705,11 @@ $results = Db::executeFile('/path/to.sql');
 
 // 关闭所有连接
 Db::closeAllConnections();
+
+// 查询日志
+Db::enableQueryLog(true);  // 启用查询日志
+$logs = Db::getQueryLog(); // 获取所有查询日志
+Db::clearQueryLog();       // 清除查询日志
 ```
 
 ### 行锁定
@@ -898,6 +923,12 @@ $lastId = User::getLastInsertId();         // 获取最后插入 ID
 $dbName = User::getDatabaseName();         // 获取数据库名称
 $statusStats = User::groupByStatus();     // 统计各状态数量
 $rawResult = User::raw('SELECT * FROM users LIMIT 1'); // 执行原生 SQL
+
+// Model 实例工具方法
+$user = User::find(1);
+$shardingCount = $user->getShardingCount();     // 获取分片数量
+$shardingStrategy = $user->getShardingStrategy(); // 获取分片策略
+$connectionName = $user->getConnectionName();     // 获取连接名称
 ```
 
 ### Model 跨库操作
@@ -1261,6 +1292,15 @@ Schema::create('demo', function (Schema $table) {
     $table->macAddress('mac');   // char(17)
     $table->uuid('guid');        // char(36)
     $table->json('options');     // json
+    $table->binary('data');      // binary
+    $table->enum('status', ['active', 'inactive', 'pending']); // enum
+
+    // 字段修饰符
+    $table->string('name')->default('Anonymous');  // 默认值
+    $table->string('email')->nullable();            // 可为空
+    $table->integer('votes')->unsigned();           // 无符号
+    $table->string('remark')->comment('备注');      // 字段注释
+    $table->string('phone')->after('email');       // 字段位置
 
     // 常用字段
     $table->rememberToken();      // remember_token varchar(100)

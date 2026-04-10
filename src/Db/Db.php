@@ -712,6 +712,12 @@ class Db
     /** @var string|null 最后执行的 SQL */
     protected static ?string $lastSql = null;
 
+    /** @var bool 是否启用查询日志 */
+    protected static bool $queryLogEnabled = false;
+
+    /** @var array 查询日志 */
+    protected static array $queryLogs = [];
+
     /**
      * 获取所有表名
      *
@@ -946,7 +952,10 @@ class Db
      */
     public static function enableQueryLog(bool $enabled = true): void
     {
-        // 日志功能预留接口 - $enabled 参数暂未使用
+        self::$queryLogEnabled = $enabled;
+        if (!$enabled) {
+            self::$queryLogs = [];
+        }
     }
 
     /**
@@ -956,6 +965,33 @@ class Db
      */
     public static function getQueryLog(): array
     {
-        return [];
+        return self::$queryLogs;
+    }
+
+    /**
+     * 记录查询日志
+     *
+     * @param string $sql SQL 语句
+     * @param array $bindings 参数
+     * @param float $time 执行时间
+     */
+    public static function logQuery(string $sql, array $bindings = [], float $time = 0): void
+    {
+        if (self::$queryLogEnabled) {
+            self::$queryLogs[] = [
+                'sql' => $sql,
+                'bindings' => $bindings,
+                'time' => $time,
+                'created_at' => date('Y-m-d H:i:s'),
+            ];
+        }
+    }
+
+    /**
+     * 清除查询日志
+     */
+    public static function clearQueryLog(): void
+    {
+        self::$queryLogs = [];
     }
 }

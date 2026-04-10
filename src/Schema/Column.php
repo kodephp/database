@@ -109,4 +109,62 @@ class Column
     {
         return $this->name;
     }
+
+    /**
+     * 设置默认值
+     */
+    public function setDefault(mixed $value): void
+    {
+        $this->options['default'] = $value;
+    }
+
+    /**
+     * 设置 nullable
+     */
+    public function setNullable(bool $nullable = true): void
+    {
+        if ($nullable) {
+            $this->options['not_null'] = false;
+        }
+    }
+
+    /**
+     * 设置无符号
+     */
+    public function setUnsigned(bool $unsigned = true): void
+    {
+        $this->options['unsigned'] = $unsigned;
+    }
+
+    /**
+     * 设置注释
+     */
+    public function setComment(string $comment): void
+    {
+        $this->options['comment'] = $comment;
+    }
+
+    /**
+     * 设置 AFTER
+     */
+    public function setAfter(string $column): void
+    {
+        $this->options['after'] = $column;
+    }
+
+    /**
+     * 获取类型
+     */
+    public function getType(): string
+    {
+        return $this->type;
+    }
+
+    /**
+     * 获取选项
+     */
+    public function getOptions(): array
+    {
+        return $this->options;
+    }
 }

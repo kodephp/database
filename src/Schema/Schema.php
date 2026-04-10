@@ -653,6 +653,126 @@ class Schema
     }
 
     /**
+     * 二进制字段
+     *
+     * @param string $name 字段名
+     * @param int $length 长度
+     * @return $this
+     */
+    public function binary(string $name, int $length = 255): static
+    {
+        $this->columns[] = new Column($name, 'binary', ['length' => $length]);
+        return $this;
+    }
+
+    /**
+     * 枚举字段
+     *
+     * @param string $name 字段名
+     * @param array $values 枚举值
+     * @return $this
+     */
+    public function enum(string $name, array $values): static
+    {
+        $allowed = implode(',', array_map(fn($v) => "'{$v}'", $values));
+        $this->columns[] = new Column($name, "enum({$allowed})", ['nullable' => true]);
+        return $this;
+    }
+
+    /**
+     * 设置字段默认值
+     *
+     * @param mixed $value 默认值
+     * @return $this
+     */
+    public function default(mixed $value): static
+    {
+        if (empty($this->columns)) {
+            return $this;
+        }
+
+        $lastColumn = end($this->columns);
+        if ($lastColumn instanceof Column) {
+            $lastColumn->setDefault($value);
+        }
+        return $this;
+    }
+
+    /**
+     * 设置字段为 nullable
+     *
+     * @return $this
+     */
+    public function nullable(): static
+    {
+        if (empty($this->columns)) {
+            return $this;
+        }
+
+        $lastColumn = end($this->columns);
+        if ($lastColumn instanceof Column) {
+            $lastColumn->setNullable(true);
+        }
+        return $this;
+    }
+
+    /**
+     * 设置字段为无符号
+     *
+     * @return $this
+     */
+    public function unsigned(): static
+    {
+        if (empty($this->columns)) {
+            return $this;
+        }
+
+        $lastColumn = end($this->columns);
+        if ($lastColumn instanceof Column) {
+            $lastColumn->setUnsigned(true);
+        }
+        return $this;
+    }
+
+    /**
+     * 设置字段注释
+     *
+     * @param string $comment 注释
+     * @return $this
+     */
+    public function columnComment(string $comment): static
+    {
+        if (empty($this->columns)) {
+            return $this;
+        }
+
+        $lastColumn = end($this->columns);
+        if ($lastColumn instanceof Column) {
+            $lastColumn->setComment($comment);
+        }
+        return $this;
+    }
+
+    /**
+     * 设置字段 AFTER
+     *
+     * @param string $afterColumn 字段名
+     * @return $this
+     */
+    public function after(string $afterColumn): static
+    {
+        if (empty($this->columns)) {
+            return $this;
+        }
+
+        $lastColumn = end($this->columns);
+        if ($lastColumn instanceof Column) {
+            $lastColumn->setAfter($afterColumn);
+        }
+        return $this;
+    }
+
+    /**
      * 生成 SQL
      *
      * @return string SQL 语句

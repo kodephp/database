@@ -757,6 +757,22 @@ abstract class Model implements ArrayAccess, JsonSerializable
     }
 
     /**
+     * 获取分片数量
+     */
+    public function getShardingCount(): int
+    {
+        return $this->shardingCount;
+    }
+
+    /**
+     * 获取分片策略
+     */
+    public function getShardingStrategy(): string
+    {
+        return $this->shardingStrategy;
+    }
+
+    /**
      * 获取连接名称
      */
     public function getConnectionName(): string

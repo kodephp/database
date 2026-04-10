@@ -1108,6 +1108,68 @@ class QueryBuilder
     }
 
     /**
+     * 插入或忽略（唯一键冲突时忽略）
+     *
+     * @param array $data 数据
+     * @return bool
+     * @example Db::table('users')->insertOrIgnore(['email' => 'test@example.com', 'name' => 'test'])
+     */
+    public function insertOrIgnore(array $data): bool
+    {
+        if (empty($data)) {
+            return false;
+        }
+
+        $columns = array_keys($data);
+        $values = array_values($data);
+        $placeholders = implode(', ', array_fill(0, count($values), '?'));
+
+        $sql = sprintf(
+            'INSERT IGNORE INTO %s (%s) VALUES (%s)',
+            $this->table,
+            implode(', ', $columns),
+            $placeholders
+        );
+
+        try {
+            return $this->connection->insert($sql, $values);
+        } catch (\Throwable) {
+            return false;
+        }
+    }
+
+    /**
+     * 条件更新 - 满足条件时才更新
+     *
+     * @param array $data 更新数据
+     * @param callable $condition 条件闭包
+     * @return int
+     * @example Db::table('users')->updateIf($data, fn($q) => $q->where('status', 1))
+     */
+    public function updateIf(array $data, callable $condition): int
+    {
+        if (empty($data)) {
+            return 0;
+        }
+
+        $condition($this);
+        return $this->update($data);
+    }
+
+    /**
+     * 条件删除 - 满足条件时才删除
+     *
+     * @param callable $condition 条件闭包
+     * @return int
+     * @example Db::table('users')->deleteIf(fn($q) => $q->where('status', 0))
+     */
+    public function deleteIf(callable $condition): int
+    {
+        $condition($this);
+        return $this->delete();
+    }
+
+    /**
      * 批量 Upsert
      *
      * @param array $records 记录数组
@@ -1390,6 +1452,89 @@ class QueryBuilder
     public function ignoreIndex(string $index): static
     {
         return $this;
+    }
+
+    /**
+     * 限制结果数量（take 别名）
+     *
+     * @param int $limit 限制数量
+     * @return static
+     * @example Db::table('users')->limitBy(10)->get()
+     */
+    public function limitBy(int $limit): static
+    {
+        return $this->limit($limit);
+    }
+
+    /**
+     * 取前 N 条记录
+     *
+     * @param int $limit 数量
+     * @return static
+     * @example Db::table('users')->take(10)->get()
+     */
+    public function take(int $limit): static
+    {
+        return $this->limit($limit);
+    }
+
+    /**
+     * 跳过 N 条记录
+     *
+     * @param int $offset 跳过数量
+     * @return static
+     * @example Db::table('users')->skip(10)->take(10)->get()
+     */
+    public function skip(int $offset): static
+    {
+        return $this->offset($offset);
+    }
+
+    /**
+     * 获取键值对
+     *
+     * @param string $key 键字段
+     * @param string|null $value 值字段
+     * @return array
+     * @example Db::table('users')->lists('id', 'name')
+     */
+    public function lists(string $key, ?string $value = null): array
+    {
+        if ($value === null) {
+            return $this->pluck($key);
+        }
+
+        $results = $this->select([$key, $value])->get();
+        $result = [];
+        foreach ($results as $row) {
+            $result[$row[$key]] = $row[$value];
+        }
+        return $result;
+    }
+
+    /**
+     * 打印 SQL（调试用）
+     *
+     * @return static
+     * @example Db::table('users')->where('id', 1)->dump()
+     */
+    public function dump(): static
+    {
+        echo "SQL: " . $this->toSql() . PHP_EOL;
+        echo "Bindings: " . json_encode($this->bindings) . PHP_EOL;
+        return $this;
+    }
+
+    /**
+     * 打印 SQL 并终止（调试用）
+     *
+     * @return never
+     * @example Db::table('users')->where('id', 1)->dd()
+     */
+    public function dd(): never
+    {
+        $this->dump();
+        exit(1);
     }
 
     /**
