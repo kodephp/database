@@ -12,50 +12,81 @@ trait SoftDeletes
 
     public function delete(): bool
     {
-        if ($this->usesSoftDeletes()) {
-            $this->{$this->softDeleteField} = date('Y-m-d H:i:s');
-            return $this->save();
+        if ($this->exists) {
+            if ($this->usesSoftDeletes()) {
+                $this->{$this->softDeleteField} = date('Y-m-d H:i:s');
+                return $this->save();
+            }
+            return $this->forceDelete();
         }
-
-        return parent::delete();
+        return false;
     }
 
     public function forceDelete(): bool
     {
-        return parent::delete();
+        if (!$this->exists) {
+            return false;
+        }
+
+        $sql = sprintf(
+            'DELETE FROM %s WHERE %s = ?',
+            $this->table,
+            $this->primaryKey
+        );
+
+        $affected = \Kode\Database\Db\Db::delete($sql, [$this->getKey()]);
+
+        if ($affected > 0) {
+            $this->exists = false;
+        }
+
+        return $affected > 0;
     }
 
     public function restore(): bool
     {
-        if ($this->usesSoftDeletes()) {
-            $this->{$this->softDeleteField} = null;
-            return $this->save();
+        if (!$this->exists || !$this->usesSoftDeletes()) {
+            return false;
         }
 
-        return false;
+        $this->{$this->softDeleteField} = null;
+        return $this->save();
     }
 
     public function withTrashed(): static
     {
-        $this->withTrashed = true;
-        return $this;
+        $clone = clone $this;
+        $clone->withTrashed = true;
+        return $clone;
     }
 
     public function onlyTrashed(): static
     {
-        $this->withTrashed = false;
-        return $this;
+        $clone = clone $this;
+        $clone->withTrashed = false;
+        return $clone;
     }
 
-    protected function usesSoftDeletes(): bool
+    public function usesSoftDeletes(): bool
     {
         return !empty($this->softDeleteField);
     }
 
-    protected function applySoftDeletes(): void
+    public function getSoftDeleteField(): string
+    {
+        return $this->softDeleteField ?? 'deleted_at';
+    }
+
+    public function setSoftDeleteField(string $field): static
+    {
+        $this->softDeleteField = $field;
+        return $this;
+    }
+
+    protected function applySoftDeletesCondition(\Kode\Database\Query\QueryBuilder $query): void
     {
         if (!$this->withTrashed && $this->usesSoftDeletes()) {
-            $this->getQuery()->whereNull($this->table . '.' . $this->softDeleteField);
+            $query->whereNull($this->softDeleteField);
         }
     }
 }

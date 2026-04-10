@@ -528,6 +528,13 @@ Db::table('users')->lists('id', 'name');       // 获取键值对
 // 调试方法
 Db::table('users')->where('id', 1)->dump();   // 打印 SQL 和 bindings
 Db::table('users')->where('id', 1)->dd();      // 打印并终止
+
+// 便捷查询方法
+Db::table('users')->isEmpty();           // 检查是否为空
+Db::table('users')->isNotEmpty();        // 检查是否不为空
+Db::table('users')->findOrCreate(['email' => 'test@example.com'], ['name' => 'test']); // 查找或创建
+Db::table('users')->batchUpdateBy([['id' => 1, 'name' => 'a'], ['id' => 2, 'name' => 'b']], 'id'); // 批量更新
+Db::table('users')->batchDeleteBy([1, 2, 3], 'id'); // 批量删除
 ```
 
 ### 表连接 (JOIN)
@@ -699,6 +706,14 @@ $status = Db::getTableStatus('users');  // 表状态信息
 $size = Db::getTableSize('users');       // 表大小（字节）
 $dbSize = Db::getDatabaseSize();        // 数据库大小（字节）
 echo Db::formatBytes($size);             // 格式化大小 "10.5 MB"
+
+// 表操作
+Db::backupTable('users');                // 备份表结构
+Db::copyTableStructure('users', 'users_backup'); // 复制表结构
+Db::renameTable('old_table', 'new_table'); // 重命名表
+Db::truncateTable('users');              // 清空表（自增归零）
+Db::dropTable('users');                  // 删除表
+Db::dropTables(['users', 'orders']);     // 删除多个表
 
 // 执行 SQL 文件
 $results = Db::executeFile('/path/to.sql');
@@ -1029,9 +1044,23 @@ class User extends Model
     protected string $softDeleteField = 'deleted_at';
 }
 
-$user->delete();       // 软删除
-$user->forceDelete();  // 硬删除
-$user->restore();      // 恢复
+// 模型实例操作
+$user = User::find(1);
+$user->delete();       // 软删除（设置 deleted_at 时间戳）
+$user->forceDelete();  // 硬删除（直接从数据库删除）
+$user->restore();      // 恢复软删除（设置 deleted_at 为 null）
+
+// 静态方法操作
+User::destroy([1, 2, 3]);           // 批量软删除
+User::forceDeleteBatch([1, 2, 3]);  // 批量硬删除
+User::deleteBatch([1, 2, 3]);       // 批量软删除（别名）
+
+// 设置软删除字段
+$user->setSoftDeleteField('deleted_at'); // 设置软删除字段名
+$user->getSoftDeleteField();             // 获取软删除字段名
+
+// 检查是否使用软删除
+$user->usesSoftDeletes(); // 检查模型是否使用软删除
 
 // 查询
 User::find(1);              // 不包含已删除

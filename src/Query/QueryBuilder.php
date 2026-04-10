@@ -1538,6 +1538,100 @@ class QueryBuilder
     }
 
     /**
+     * 检查是否为空
+     *
+     * @return bool
+     * @example Db::table('users')->isEmpty()
+     */
+    public function isEmpty(): bool
+    {
+        return $this->count() === 0;
+    }
+
+    /**
+     * 检查是否不为空
+     *
+     * @return bool
+     * @example Db::table('users')->isNotEmpty()
+     */
+    public function isNotEmpty(): bool
+    {
+        return !$this->isEmpty();
+    }
+
+    /**
+     * 批量更新（基于指定字段）
+     *
+     * @param array $data 数据数组
+     * @param string $keyField 主键字段名
+     * @return int 影响行数
+     * @example Db::table('users')->batchUpdateBy([['id' => 1, 'name' => 'a'], ['id' => 2, 'name' => 'b']], 'id')
+     */
+    public function batchUpdateBy(array $data, string $keyField = 'id'): int
+    {
+        if (empty($data)) {
+            return 0;
+        }
+
+        $affected = 0;
+        foreach ($data as $record) {
+            if (!isset($record[$keyField])) {
+                continue;
+            }
+
+            $keyValue = $record[$keyField];
+            unset($record[$keyField]);
+
+            if (!empty($record)) {
+                $affected += $this->where($keyField, '=', $keyValue)->update($record);
+            }
+        }
+
+        return $affected;
+    }
+
+    /**
+     * 批量删除（基于指定字段）
+     *
+     * @param array $values 值数组
+     * @param string $field 字段名
+     * @return int 影响行数
+     * @example Db::table('users')->batchDeleteBy([1, 2, 3], 'id')
+     */
+    public function batchDeleteBy(array $values, string $field = 'id'): int
+    {
+        if (empty($values)) {
+            return 0;
+        }
+
+        return $this->whereIn($field, $values)->delete();
+    }
+
+    /**
+     * 查找或创建
+     *
+     * @param array $attributes 创建条件
+     * @param array $values 创建数据
+     * @return array|null
+     * @example Db::table('users')->findOrCreate(['email' => 'test@example.com'], ['name' => 'test'])
+     */
+    public function findOrCreate(array $attributes, array $values = []): ?array
+    {
+        $exists = $this->where($attributes)->exists();
+
+        if ($exists) {
+            return $this->where($attributes)->first();
+        }
+
+        $data = array_merge($attributes, $values);
+        if ($this->insert($data)) {
+            return $this->where($attributes)->first();
+        }
+
+        return null;
+    }
+
+    /**
      * 克隆方法
      */
     public function __clone()

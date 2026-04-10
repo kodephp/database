@@ -946,6 +946,86 @@ class Db
     }
 
     /**
+     * 备份表结构
+     *
+     * @param string $table 表名
+     * @return string CREATE TABLE SQL
+     */
+    public static function backupTable(string $table): string
+    {
+        $result = self::select("SHOW CREATE TABLE {$table}");
+        return $result[0]['Create Table'] ?? '';
+    }
+
+    /**
+     * 复制表结构
+     *
+     * @param string $source 源表
+     * @param string $target 目标表
+     * @return bool
+     */
+    public static function copyTableStructure(string $source, string $target): bool
+    {
+        try {
+            $createSql = self::backupTable($source);
+            $createSql = str_replace($source, $target, $createSql);
+            return self::statement($createSql);
+        } catch (\Throwable) {
+            return false;
+        }
+    }
+
+    /**
+     * 重命名表
+     *
+     * @param string $from 原表名
+     * @param string $to 新表名
+     * @return bool
+     */
+    public static function renameTable(string $from, string $to): bool
+    {
+        return self::statement("RENAME TABLE {$from} TO {$to}");
+    }
+
+    /**
+     * 清空表（自增归零）
+     *
+     * @param string $table 表名
+     * @return bool
+     */
+    public static function truncateTable(string $table): bool
+    {
+        return self::statement("TRUNCATE TABLE {$table}");
+    }
+
+    /**
+     * 删除表
+     *
+     * @param string $table 表名
+     * @return bool
+     */
+    public static function dropTable(string $table): bool
+    {
+        return self::statement("DROP TABLE IF EXISTS {$table}");
+    }
+
+    /**
+     * 删除多个表
+     *
+     * @param array $tables 表名数组
+     * @return bool
+     */
+    public static function dropTables(array $tables): bool
+    {
+        if (empty($tables)) {
+            return false;
+        }
+
+        $tables = array_map(fn($t) => "`{$t}`", $tables);
+        return self::statement("DROP TABLE IF EXISTS " . implode(', ', $tables));
+    }
+
+    /**
      * 设置查询日志
      *
      * @param bool $enabled 是否启用
