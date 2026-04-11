@@ -405,9 +405,7 @@ trait HasAttributes
      */
     public function clearRelations(): static
     {
-        if (isset($this->relations)) {
-            $this->relations = [];
-        }
+        $this->relations = [];
         return $this;
     }
 
@@ -419,11 +417,116 @@ trait HasAttributes
     public function debug(): array
     {
         return [
-            'attributes' => $this->attributes ?? [],
-            'original' => $this->original ?? [],
-            'casts' => $this->casts ?? [],
-            'hidden' => $this->hidden ?? [],
-            'visible' => $this->visible ?? [],
+            'attributes' => $this->attributes,
+            'original' => $this->original,
+            'casts' => $this->casts,
+            'hidden' => $this->hidden,
+            'visible' => $this->visible,
+            'relations' => $this->relations,
         ];
+    }
+
+    /**
+     * 检查属性是否存在
+     *
+     * @param string $key 键名
+     * @return bool
+     */
+    public function hasAttribute(string $key): bool
+    {
+        return $this->offsetExists($key);
+    }
+
+    /**
+     * 获取所有属性名
+     *
+     * @return array
+     */
+    public function getAttributeKeys(): array
+    {
+        return array_keys($this->attributes);
+    }
+
+    /**
+     * 批量获取属性
+     *
+     * @param array $keys 键名数组
+     * @return array
+     */
+    public function getAttributesOnly(array $keys): array
+    {
+        $result = [];
+        foreach ($keys as $key) {
+            if ($this->offsetExists($key)) {
+                $result[$key] = $this->getAttribute($key);
+            }
+        }
+        return $result;
+    }
+
+    /**
+     * 排除指定属性获取其余属性
+     *
+     * @param array $keys 排除的键名数组
+     * @return array
+     */
+    public function except(array $keys): array
+    {
+        $result = [];
+        foreach ($this->attributes as $key => $value) {
+            if (!in_array($key, $keys, true)) {
+                $result[$key] = $this->getAttribute($key);
+            }
+        }
+        return $result;
+    }
+
+    /**
+     * 只获取指定属性
+     *
+     * @param array $keys 键名数组
+     * @return array
+     */
+    public function only(array $keys): array
+    {
+        return $this->getAttributesOnly($keys);
+    }
+
+    /**
+     * 合并属性
+     *
+     * @param array $attributes 属性数组
+     * @return $this
+     */
+    public function merge(array $attributes): static
+    {
+        foreach ($attributes as $key => $value) {
+            $this->setAttribute($key, $value);
+        }
+        return $this;
+    }
+
+    /**
+     * 强制设置属性（绕过修改器）
+     *
+     * @param string $key 键名
+     * @param mixed $value 值
+     * @return $this
+     */
+    public function forceSetAttribute(string $key, mixed $value): static
+    {
+        $this->attributes[$key] = $value;
+        return $this;
+    }
+
+    /**
+     * 强制获取属性（绕过获取器）
+     *
+     * @param string $key 键名
+     * @return mixed
+     */
+    public function forceGetAttribute(string $key): mixed
+    {
+        return $this->attributes[$key] ?? null;
     }
 }

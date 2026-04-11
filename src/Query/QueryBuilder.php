@@ -1632,6 +1632,138 @@ class QueryBuilder
     }
 
     /**
+     * 查找或失败（抛出异常）
+     *
+     * @param array $attributes 查找条件
+     * @param string|null $exceptionClass 异常类名
+     * @return array
+     * @throws \Throwable
+     */
+    public function findOrFail(array $attributes, ?string $exceptionClass = null): array
+    {
+        $result = $this->where($attributes)->first();
+
+        if ($result === null) {
+            $exception = $exceptionClass ?? \Kode\Database\Exception\ModelNotFoundException::class;
+            throw new $exception('Record not found');
+        }
+
+        return $result;
+    }
+
+    /**
+     * 首条记录或失败（抛出异常）
+     *
+     * @param string|null $exceptionClass 异常类名
+     * @return array
+     * @throws \Throwable
+     */
+    public function firstOrFail(?string $exceptionClass = null): array
+    {
+        $result = $this->first();
+
+        if ($result === null) {
+            $exception = $exceptionClass ?? \Kode\Database\Exception\ModelNotFoundException::class;
+            throw new $exception('Record not found');
+        }
+
+        return $result;
+    }
+
+    /**
+     * 分块处理结果集（按主键）
+     *
+     * @param int $chunkSize 块大小
+     * @param callable $callback 回调函数
+     * @param string $column 主键列名
+     * @return bool
+     */
+    public function chunkById(int $chunkSize, callable $callback, string $column = 'id'): bool
+    {
+        $lastId = 0;
+
+        do {
+            $results = $this->where($column, '>', $lastId)
+                ->orderBy($column)
+                ->limit($chunkSize)
+                ->get();
+
+            if (empty($results)) {
+                break;
+            }
+
+            foreach ($results as $result) {
+                $lastId = $result[$column];
+            }
+
+            if (!$callback($results, $lastId)) {
+                return false;
+            }
+        } while (count($results) === $chunkSize);
+
+        return true;
+    }
+
+    /**
+     * 是否存在任意一条记录
+     *
+     * @param callable|null $callback 条件回调
+     * @return bool
+     */
+    public function existsBy(?callable $callback = null): bool
+    {
+        if ($callback !== null) {
+            $callback($this);
+        }
+        return $this->exists();
+    }
+
+    /**
+     * 获取第一条记录
+     *
+     * @return array|null
+     */
+    public function begin(): ?array
+    {
+        return $this->first();
+    }
+
+    /**
+     * 获取最后一条记录
+     *
+     * @return array|null
+     */
+    public function end(): ?array
+    {
+        return $this->orderBy('id', 'desc')->first();
+    }
+
+    /**
+     * 获取第 N 条记录
+     *
+     * @param int $offset 偏移量
+     * @return array|null
+     */
+    public function nth(int $offset): ?array
+    {
+        return $this->offset($offset)->limit(1)->first();
+    }
+
+    /**
+     * 获取随机记录
+     *
+     * @param int $count 数量
+     * @return array
+     */
+    public function random(int $count = 1): array
+    {
+        if ($count === 1) {
+            return $this->orderByRaw('RAND()')->first() ?? [];
+        }
+        return $this->orderByRaw('RAND()')->limit($count)->get()->toArray();
+    }
+
+    /**
      * 克隆方法
      */
     public function __clone()

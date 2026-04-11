@@ -535,6 +535,14 @@ Db::table('users')->isNotEmpty();        // 检查是否不为空
 Db::table('users')->findOrCreate(['email' => 'test@example.com'], ['name' => 'test']); // 查找或创建
 Db::table('users')->batchUpdateBy([['id' => 1, 'name' => 'a'], ['id' => 2, 'name' => 'b']], 'id'); // 批量更新
 Db::table('users')->batchDeleteBy([1, 2, 3], 'id'); // 批量删除
+Db::table('users')->findOrFail(['id' => 1]); // 查找或抛出异常
+Db::table('users')->firstOrFail(); // 获取第一条或抛出异常
+Db::table('users')->chunkById(100, function ($users, $lastId) { /* 处理每批 */ }); // 按主键分块
+Db::table('users')->existsBy(fn($q) => $q->where('status', 1)); // 条件是否存在
+Db::table('users')->begin(); // 获取第一条
+Db::table('users')->end(); // 获取最后一条
+Db::table('users')->nth(5); // 获取第 N 条
+Db::table('users')->random(3); // 获取随机记录
 ```
 
 ### 表连接 (JOIN)
@@ -1156,6 +1164,18 @@ $name = $user->getOriginalValue('name');   // 获取指定原始值
 // 同步原始数据
 $user->syncOriginal();        // 同步所有原始数据
 $user->syncChanges();         // 同步修改的数据
+
+// 属性操作
+$user->hasAttribute('name');           // 检查属性是否存在
+$keys = $user->getAttributeKeys();     // 获取所有属性名
+$user->getAttributesOnly(['id', 'name']); // 只获取指定属性
+$user->except(['password']);           // 排除指定属性
+$user->only(['id', 'name']);          // 只获取指定属性
+$user->merge(['name' => 'new']);       // 合并属性
+$user->forceSetAttribute('id', 100);   // 强制设置属性（绕过修改器）
+$value = $user->forceGetAttribute('id'); // 强制获取属性（绕过获取器）
+$user->clearRelations();                // 清空关联
+$debug = $user->debug();               // 获取调试信息
 ```
 
 ---
@@ -1561,6 +1581,7 @@ src/
 ├── Exception/           # 异常类
 │   ├── ConnectionException.php
 │   ├── DatabaseException.php
+│   ├── ModelNotFoundException.php
 │   └── QueryException.php
 ├── Model/               # 模型基类
 │   ├── Concerns/        # Traits
@@ -1591,6 +1612,48 @@ src/
     ├── Column.php
     ├── ForeignKey.php
     └── Schema.php
+```
+
+---
+
+## 异常处理
+
+```php
+use Kode\Database\Exception\DatabaseException;
+use Kode\Database\Exception\ModelNotFoundException;
+use Kode\Database\Exception\QueryException;
+use Kode\Database\Exception\ConnectionException;
+
+try {
+    // 查询异常
+    $result = Db::table('users')->where('id', 1)->first();
+} catch (QueryException $e) {
+    echo "SQL 错误: " . $e->getMessage();
+    echo "SQL: " . $e->getSql();
+    echo "参数: " . json_encode($e->getBindings());
+}
+
+// 连接异常
+try {
+    Db::connect('invalid_database');
+} catch (ConnectionException $e) {
+    echo "连接失败: " . $e->getMessage();
+}
+
+// 模型未找到异常
+try {
+    $user = Db::table('users')->findOrFail(['id' => 9999]);
+} catch (ModelNotFoundException $e) {
+    echo "模型未找到: " . $e->getMessage();
+    echo "模型类: " . $e->getModel();
+}
+
+// 通用数据库异常
+try {
+    // 数据库操作
+} catch (DatabaseException $e) {
+    echo "数据库错误: " . $e->getMessage();
+}
 ```
 
 ---
