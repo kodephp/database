@@ -72,9 +72,7 @@ abstract class Relation
             $instance->fill(array_merge($attributes, $values));
             $instance->save();
         } else {
-            foreach ($values as $key => $value) {
-                $instance->$key = $value;
-            }
+            $instance->fill($values);
             $instance->save();
         }
 

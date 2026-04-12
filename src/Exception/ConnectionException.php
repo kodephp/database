@@ -50,12 +50,12 @@ class ConnectionException extends DatabaseException
 
     public static function make(string $connectionName = 'default', ?string $message = null): static
     {
-        return new static($connectionName, $message);
+        return new static($connectionName, $message, 0, null, '', 0);
     }
 
     public static function cannotConnect(string $connectionName = 'default', string $host = '', int $port = 0): static
     {
-        return new static($connectionName, "Cannot connect to database [{$connectionName}]", 0, null, $host, $port);
+        return new static($connectionName, null, 0, null, $host, $port);
     }
 
     public static function timeout(string $connectionName = 'default'): static
@@ -65,6 +65,6 @@ class ConnectionException extends DatabaseException
 
     public static function refused(string $connectionName = 'default', string $host = '', int $port = 0): static
     {
-        return new static($connectionName, "Connection refused [{$connectionName}] at {$host}:{$port}", 0, null, $host, $port);
+        return new static($connectionName, null, 0, null, $host, $port);
     }
 }
