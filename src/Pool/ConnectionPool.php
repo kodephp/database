@@ -85,13 +85,11 @@ class ConnectionPool implements PoolInterface
             throw ConnectionException::timeout('ConnectionPool');
         }
 
-        if (class_exists('Fiber')) {
-            $fiber = @\Fiber::getCurrent();
-            if ($fiber !== null && $fiber->isStarted()) {
-                $fiberId = $fiber->getId();
-                if (isset($this->connections[$fiberId])) {
-                    return $this->connections[$fiberId];
-                }
+        $fiber = $this->getCurrentFiber();
+        if ($fiber !== null) {
+            $fiberId = $this->getFiberId($fiber);
+            if ($fiberId !== null && isset($this->connections[$fiberId])) {
+                return $this->connections[$fiberId];
             }
         }
 
@@ -108,6 +106,39 @@ class ConnectionPool implements PoolInterface
         }
 
         throw ConnectionException::make('ConnectionPool', '连接池已满');
+    }
+
+    /**
+     * 获取当前 Fiber（如果存在）
+     */
+    private function getCurrentFiber(): ?object
+    {
+        if (!class_exists('Fiber')) {
+            return null;
+        }
+
+        try {
+            $fiber = @\Fiber::getCurrent();
+            return $fiber;
+        } catch (\Throwable) {
+            return null;
+        }
+    }
+
+    /**
+     * 获取 Fiber ID
+     */
+    private function getFiberId(object $fiber): ?int
+    {
+        if (!method_exists($fiber, 'getId')) {
+            return null;
+        }
+
+        try {
+            return $fiber->getId();
+        } catch (\Throwable) {
+            return null;
+        }
     }
 
     /**

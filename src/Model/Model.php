@@ -1682,4 +1682,153 @@ abstract class Model implements ArrayAccess, JsonSerializable
 
         return floor($diff / 31536000) . '年';
     }
+
+    /**
+     * 克隆模型（创建副本）
+     *
+     * @return static
+     */
+    public function replicate(): static
+    {
+        $clone = new static();
+        $clone->setAttributes($this->attributes, false);
+        $clone->exists = false;
+        $clone->syncChanges();
+        return $clone;
+    }
+
+    /**
+     * 获取模型哈希值
+     *
+     * @return string
+     */
+    public function hash(): string
+    {
+        return spl_object_hash($this);
+    }
+
+    /**
+     * 获取模型 ID 哈希值
+     *
+     * @return string
+     */
+    public function hashId(): string
+    {
+        $key = $this->getKey();
+        return md5(static::class . ':' . ($key ?? spl_object_hash($this)));
+    }
+
+    /**
+     * 检查属性是否存在
+     *
+     * @param string $key 属性名
+     * @return bool
+     */
+    public function hasAttribute(string $key): bool
+    {
+        return array_key_exists($key, $this->attributes);
+    }
+
+    /**
+     * 获取所有属性名
+     *
+     * @return array
+     */
+    public function getAttributeNames(): array
+    {
+        return array_keys($this->attributes);
+    }
+
+    /**
+     * 获取属性数量
+     *
+     * @return int
+     */
+    public function countAttributes(): int
+    {
+        return count($this->attributes);
+    }
+
+    /**
+     * 获取原始值与新值的差异
+     *
+     * @return array
+     */
+    public function getChanges(): array
+    {
+        return $this->changes;
+    }
+
+    /**
+     * 设置多个属性（批量）
+     *
+     * @param array $attributes 属性数组
+     * @param bool $sync 是否同步原始值
+     * @return $this
+     */
+    public function setData(array $attributes, bool $sync = true): static
+    {
+        $this->fill($attributes);
+        if ($sync) {
+            $this->syncOriginal();
+        }
+        return $this;
+    }
+
+    /**
+     * 获取数据副本
+     *
+     * @return array
+     */
+    public function toArrayWithDefaults(): array
+    {
+        $defaults = $this->getDefaults();
+        $attributes = $this->attributes;
+
+        foreach ($defaults as $key => $value) {
+            if (!isset($attributes[$key])) {
+                $attributes[$key] = $value;
+            }
+        }
+
+        return $attributes;
+    }
+
+    /**
+     * 检查是否已删除
+     *
+     * @return bool
+     */
+    public function isDeleted(): bool
+    {
+        return $this->softDelete && isset($this->attributes['deleted_at']);
+    }
+
+    /**
+     * 检查是否是新模型（未保存到数据库）
+     *
+     * @return bool
+     */
+    public function isNew(): bool
+    {
+        return !$this->exists;
+    }
+
+    /**
+     * 获取模型摘要信息
+     *
+     * @return array
+     */
+    public function summary(): array
+    {
+        return [
+            'class' => static::class,
+            'table' => $this->table,
+            'key' => $this->getKey(),
+            'exists' => $this->exists,
+            'attributes' => count($this->attributes),
+            'changes' => count($this->changes),
+            'relations' => count($this->relations),
+        ];
+    }
 }

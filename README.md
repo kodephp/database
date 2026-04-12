@@ -1226,6 +1226,20 @@ $original = $user->getRawOriginal();  // 获取原始数据
 $diff = $user->diff($anotherUser);    // 比较模型差异
 $age = $user->age();                  // 获取模型年龄（基于 created_at）
 $age = $user->age('updated_at');     // 指定时间字段
+
+// 模型工具方法
+$clone = $user->replicate();        // 克隆模型（创建副本）
+$hash = $user->hash();              // 获取模型哈希值
+$hashId = $user->hashId();          // 获取模型 ID 哈希值
+$hasAttr = $user->hasAttribute('name'); // 检查属性是否存在
+$attrNames = $user->getAttributeNames(); // 获取所有属性名
+$attrCount = $user->countAttributes(); // 获取属性数量
+$changes = $user->getChanges();      // 获取修改的变化
+$user->setData(['name' => 'new']);  // 批量设置属性
+$withDefaults = $user->toArrayWithDefaults(); // 获取包含默认值的数组
+$isDeleted = $user->isDeleted();     // 检查是否已删除
+$isNew = $user->isNew();            // 检查是否是新模型
+$summary = $user->summary();         // 获取模型摘要信息
 ```
 
 ---
