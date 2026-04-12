@@ -543,6 +543,14 @@ Db::table('users')->begin(); // 获取第一条
 Db::table('users')->end(); // 获取最后一条
 Db::table('users')->nth(5); // 获取第 N 条
 Db::table('users')->random(3); // 获取随机记录
+Db::table('users')->hasConditions(); // 检查是否有查询条件
+Db::table('users')->whereCount(); // 获取条件数量
+Db::table('users')->clearWhere(); // 清空 WHERE 条件
+Db::table('users')->clearOrderBy(); // 清空排序
+Db::table('users')->clearLimit(); // 清空 limit/offset
+Db::table('users')->reset(); // 重置所有条件
+Db::table('users')->toInfo(); // 获取查询信息摘要
+Db::table('users')->copy(); // 复制查询构建器
 ```
 
 ### 表连接 (JOIN)

@@ -3,7 +3,7 @@
     "description": "轻量级数据库适配器，兼容 Laravel、ThinkPHP、Hyperf ORM，支持多数据库连接、分库分表、连接池、协程、事件监听、Schema 定义",
     "type": "library",
     "license": "Apache-2.0",
-    "version": "1.8.3",
+    "version": "1.8.4",
     "autoload": {
         "psr-4": {
             "Kode\\Database\\": "src/"

@@ -926,6 +926,82 @@ class QueryBuilder
     }
 
     /**
+     * 清空 WHERE 条件
+     */
+    public function clearWhere(): static
+    {
+        $this->wheres = [];
+        $this->bindings = array_filter($this->bindings, fn($key) => !str_starts_with($key, 'where_'), ARRAY_FILTER_USE_KEY);
+        return $this;
+    }
+
+    /**
+     * 清空排序
+     */
+    public function clearOrderBy(): static
+    {
+        $this->orderBy = '';
+        $this->orderDirection = 'ASC';
+        return $this;
+    }
+
+    /**
+     * 清空 limit 和 offset
+     */
+    public function clearLimit(): static
+    {
+        $this->limit = null;
+        $this->offset = null;
+        return $this;
+    }
+
+    /**
+     * 清空所有
+     */
+    public function reset(): static
+    {
+        return $this->clear();
+    }
+
+    /**
+     * 获取查询信息摘要
+     *
+     * @return array
+     */
+    public function toInfo(): array
+    {
+        return [
+            'table' => $this->table,
+            'columns' => $this->columns,
+            'wheres' => $this->wheres,
+            'limit' => $this->limit,
+            'offset' => $this->offset,
+            'orderBy' => $this->orderBy ? "{$this->orderBy} {$this->orderDirection}" : null,
+            'bindings' => $this->bindings,
+        ];
+    }
+
+    /**
+     * 检查查询条件是否为空
+     *
+     * @return bool
+     */
+    public function hasConditions(): bool
+    {
+        return !empty($this->wheres);
+    }
+
+    /**
+     * 获取条件数量
+     *
+     * @return int
+     */
+    public function whereCount(): int
+    {
+        return count($this->wheres);
+    }
+
+    /**
      * 批量查询 - 分块处理大量数据
      *
      * @param callable $callback 回调函数，接收一维数组记录

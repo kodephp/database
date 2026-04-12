@@ -77,9 +77,7 @@ class ConnectionPool implements PoolInterface
      */
     public function get(): mixed
     {
-        $channelClass = \Swoole\Coroutine\Channel::class;
-
-        if ($this->channel && class_exists($channelClass)) {
+        if ($this->channel && class_exists('Swoole\\Coroutine\\Channel')) {
             $connection = $this->channel->pop($this->maxWaitTime);
             if ($connection !== false) {
                 return $connection;
@@ -87,9 +85,9 @@ class ConnectionPool implements PoolInterface
             throw ConnectionException::timeout('ConnectionPool');
         }
 
-        if (class_exists(\Fiber::class)) {
-            $fiber = \Fiber::getCurrent();
-            if ($fiber !== null) {
+        if (class_exists('Fiber')) {
+            $fiber = @\Fiber::getCurrent();
+            if ($fiber !== null && $fiber->isStarted()) {
                 $fiberId = $fiber->getId();
                 if (isset($this->connections[$fiberId])) {
                     return $this->connections[$fiberId];
