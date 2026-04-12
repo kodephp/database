@@ -927,4 +927,127 @@ class Schema
         $sql = implode("\n", $parts);
         return rtrim($sql, ',');
     }
+
+    /**
+     * 检查字段是否存在
+     *
+     * @param string $columnName 字段名
+     * @return bool
+     */
+    public function columnExists(string $columnName): bool
+    {
+        foreach ($this->columns as $column) {
+            if ($column->getName() === $columnName) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * 重命名字段
+     *
+     * @param string $oldName 旧字段名
+     * @param string $newName 新字段名
+     * @return $this
+     */
+    public function renameColumn(string $oldName, string $newName): static
+    {
+        foreach ($this->columns as $column) {
+            if ($column->getName() === $oldName) {
+                $column->setName($newName);
+                $column->setOldName($oldName);
+                break;
+            }
+        }
+        return $this;
+    }
+
+    /**
+     * 删除索引
+     *
+     * @param string $indexName 索引名
+     * @return $this
+     */
+    public function dropIndex(string $indexName): static
+    {
+        foreach ($this->indexes as $key => $index) {
+            if (($index['name'] ?? '') === $indexName) {
+                $this->indexes[$key]['drop'] = true;
+                break;
+            }
+        }
+        return $this;
+    }
+
+    /**
+     * 生成重命名表 SQL
+     *
+     * @param string $newName 新表名
+     * @return string SQL 语句
+     */
+    public function renameTableSql(string $newName): string
+    {
+        return "RENAME TABLE {$this->table} TO {$newName}";
+    }
+
+    /**
+     * 生成清空表 SQL
+     *
+     * @return string SQL 语句
+     */
+    public function truncateTableSql(): string
+    {
+        return "TRUNCATE TABLE {$this->table}";
+    }
+
+    /**
+     * 生成删除表 SQL
+     *
+     * @return string SQL 语句
+     */
+    public function dropTableSql(): string
+    {
+        return "DROP TABLE IF EXISTS {$this->table}";
+    }
+
+    /**
+     * 获取表引擎
+     *
+     * @return string
+     */
+    public function getEngine(): string
+    {
+        return $this->engine;
+    }
+
+    /**
+     * 获取字符集
+     *
+     * @return string
+     */
+    public function getCharset(): string
+    {
+        return $this->charset;
+    }
+
+    /**
+     * 获取排序规则
+     *
+     * @return string
+     */
+    public function getCollation(): string
+    {
+        return $this->collation;
+    }
+
+    /**
+     * 获取表选项
+     *
+     * @return array
+     */
+    public function getOptions(): array
+    {
+        return $this->options;
+    }
 }

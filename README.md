@@ -1412,6 +1412,16 @@ Schema::create('demo', function (Schema $table) {
     $columns = $table->getColumns();   // 获取所有字段
     $indexes = $table->getIndexes();   // 获取所有索引
     $foreignKeys = $table->getForeignKeys(); // 获取所有外键
+    $engine = $table->getEngine();     // 获取存储引擎
+    $charset = $table->getCharset();   // 获取字符集
+    $collation = $table->getCollation(); // 获取排序规则
+    $options = $table->getOptions();   // 获取表选项
+    $table->columnExists('email');     // 检查字段是否存在
+    $table->renameColumn('name', 'username'); // 重命名字段
+    $table->dropIndex('idx_email');   // 删除索引
+    $renameSql = $table->renameTableSql('new_users'); // 生成重命名表 SQL
+    $truncateSql = $table->truncateTableSql(); // 生成清空表 SQL
+    $dropSql = $table->dropTableSql(); // 生成删除表 SQL
 
     // 常用字段
     $table->rememberToken();      // remember_token varchar(100)
