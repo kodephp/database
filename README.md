@@ -1256,6 +1256,17 @@ $withDefaults = $user->toArrayWithDefaults(); // 获取包含默认值的数组
 $isDeleted = $user->isDeleted();     // 检查是否已删除
 $isNew = $user->isNew();            // 检查是否是新模型
 $summary = $user->summary();         // 获取模型摘要信息
+$defaults = $user->getDefaults();    // 获取所有默认值
+$user->setDefault('name', 'default'); // 设置默认值
+$hasDefault = $user->hasDefault('name'); // 检查是否有默认值
+$merged = $user->merge(['name' => 'new']); // 合并属性
+$only = $user->only(['id', 'name']);  // 只获取指定属性
+$except = $user->except(['password']); // 排除指定属性
+$hasAttrs = $user->hasAttributes(['id', 'name']); // 检查多个属性
+$first = $user->firstAttribute();    // 获取第一个属性
+$last = $user->lastAttribute();       // 获取最后一个属性
+$serialized = $user->serialize();     // 序列化模型
+$user2 = User::unserialize($serialized); // 反序列化模型
 ```
 
 ---

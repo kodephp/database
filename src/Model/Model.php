@@ -1831,4 +1831,165 @@ abstract class Model implements ArrayAccess, JsonSerializable
             'relations' => count($this->relations),
         ];
     }
+
+    /**
+     * 获取默认值
+     *
+     * @param string $key 属性名
+     * @param mixed $default 默认值
+     * @return mixed
+     */
+    public function getDefault(string $key, mixed $default = null): mixed
+    {
+        return $this->defaults[$key] ?? $default;
+    }
+
+    /**
+     * 设置默认值
+     *
+     * @param string $key 属性名
+     * @param mixed $value 默认值
+     * @return $this
+     */
+    public function setDefault(string $key, mixed $value): static
+    {
+        $this->defaults[$key] = $value;
+        return $this;
+    }
+
+    /**
+     * 获取所有默认值
+     *
+     * @return array
+     */
+    public function getDefaults(): array
+    {
+        return $this->defaults;
+    }
+
+    /**
+     * 设置多个默认值
+     *
+     * @param array $defaults 默认值数组
+     * @return $this
+     */
+    public function setDefaults(array $defaults): static
+    {
+        $this->defaults = array_merge($this->defaults, $defaults);
+        return $this;
+    }
+
+    /**
+     * 检查是否有默认值
+     *
+     * @param string $key 属性名
+     * @return bool
+     */
+    public function hasDefault(string $key): bool
+    {
+        return array_key_exists($key, $this->defaults);
+    }
+
+    /**
+     * 合并属性
+     *
+     * @param array $attributes 属性数组
+     * @return $this
+     */
+    public function merge(array $attributes): static
+    {
+        $this->attributes = array_merge($this->attributes, $attributes);
+        return $this;
+    }
+
+    /**
+     * 只获取指定属性
+     *
+     * @param array $keys 属性名数组
+     * @return array
+     */
+    public function only(array $keys): array
+    {
+        $result = [];
+        foreach ($keys as $key) {
+            if (array_key_exists($key, $this->attributes)) {
+                $result[$key] = $this->attributes[$key];
+            }
+        }
+        return $result;
+    }
+
+    /**
+     * 获取除了指定属性外的所有属性
+     *
+     * @param array $keys 要排除的属性名数组
+     * @return array
+     */
+    public function except(array $keys): array
+    {
+        $result = [];
+        foreach ($this->attributes as $key => $value) {
+            if (!in_array($key, $keys, true)) {
+                $result[$key] = $value;
+            }
+        }
+        return $result;
+    }
+
+    /**
+     * 检查多个属性是否有值
+     *
+     * @param array $keys 属性名数组
+     * @return bool
+     */
+    public function hasAttributes(array $keys): bool
+    {
+        foreach ($keys as $key) {
+            if (!array_key_exists($key, $this->attributes)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * 获取第一个属性
+     *
+     * @return mixed
+     */
+    public function firstAttribute(): mixed
+    {
+        return $this->attributes[array_key_first($this->attributes)] ?? null;
+    }
+
+    /**
+     * 获取最后一个属性
+     *
+     * @return mixed
+     */
+    public function lastAttribute(): mixed
+    {
+        return $this->attributes[array_key_last($this->attributes)] ?? null;
+    }
+
+    /**
+     * 序列化模型
+     *
+     * @return string
+     */
+    public function serialize(): string
+    {
+        return serialize($this);
+    }
+
+    /**
+     * 反序列化模型
+     *
+     * @param string $data 序列化字符串
+     * @return static
+     */
+    public static function unserialize(string $data): static
+    {
+        return unserialize($data);
+    }
 }
