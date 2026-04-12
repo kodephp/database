@@ -11,11 +11,11 @@ class ModelNotFoundException extends DatabaseException
 {
     protected string $model = '';
 
-    public function __construct(string $model = '', ?string $message = null)
+    public function __construct(string $model = '', ?string $message = null, ?\Throwable $previous = null)
     {
         $this->model = $model;
         $message = $message ?? ($model ? "Model [{$model}] not found" : 'Record not found');
-        parent::__construct($message);
+        parent::__construct($message, 0, $previous);
     }
 
     public function getModel(): string

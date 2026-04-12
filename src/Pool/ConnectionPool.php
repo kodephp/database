@@ -83,7 +83,7 @@ class ConnectionPool implements PoolInterface
             if ($connection !== false) {
                 return $connection;
             }
-            throw new ConnectionException("获取数据库连接超时");
+            throw ConnectionException::timeout('ConnectionPool');
         }
 
         // Fiber 协程环境
@@ -108,7 +108,7 @@ class ConnectionPool implements PoolInterface
             return $connection;
         }
 
-        throw new ConnectionException("连接池已满");
+        throw ConnectionException::make('ConnectionPool', '连接池已满');
     }
 
     /**
