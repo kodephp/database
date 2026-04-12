@@ -962,9 +962,23 @@ $records = User::findBy([1, 2, 3], 'id');       // 批量查找
 $count = User::countBy(['status' => 1]);       // 条件计数
 $hasRecord = User::has(['email' => 'test@example.com']); // 判断是否存在
 $className = User::getClassName();              // 获取模型类名
+$shortClassName = User::getShortClassName();     // 获取模型简短类名
 $prefix = User::getTablePrefix();              // 获取表前缀
+$tableWithoutPrefix = User::getTableNameWithoutPrefix(); // 获取不含前缀的表名
 $values = User::values('name', ['status' => 1]); // 获取单个字段值列表
 $paginator = User::page(1, 15, ['status' => 1]); // 分页查询
+$first = User::first();                         // 获取第一条记录
+$last = User::last();                           // 获取最后一条记录
+$nth = User::nth(5);                            // 获取第 N 条记录
+$existsById = User::existsById(1);             // 根据 ID 检查是否存在
+$existingIds = User::existsByIds([1, 2, 3]);  // 批量检查 ID 是否存在
+
+// SQL 日志功能
+User::enableSqlLog();                           // 启用 SQL 日志
+User::disableSqlLog();                          // 禁用 SQL 日志
+$logs = User::getSqlLog();                      // 获取 SQL 日志
+$lastSql = User::getLastSql();                  // 获取最后执行的 SQL
+User::clearSqlLog();                            // 清除 SQL 日志
 
 ### Model 跨库操作
 

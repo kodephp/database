@@ -1411,4 +1411,142 @@ abstract class Model implements ArrayAccess, JsonSerializable
         }
         return '';
     }
+
+    /**
+     * 获取模型简短类名
+     *
+     * @return string
+     */
+    public static function getShortClassName(): string
+    {
+        $class = static::class;
+        return substr($class, strrpos($class, '\\') + 1);
+    }
+
+    /**
+     * 获取表名（不含前缀）
+     *
+     * @return string
+     */
+    public static function getTableNameWithoutPrefix(): string
+    {
+        $table = static::getTableName();
+        $prefix = static::getTablePrefix();
+        if ($prefix) {
+            return substr($table, strlen($prefix) + 1);
+        }
+        return $table;
+    }
+
+    /**
+     * 获取 SQL 日志
+     *
+     * @return array
+     */
+    public static function getSqlLog(): array
+    {
+        return \Kode\Database\Db\Db::getQueryLog();
+    }
+
+    /**
+     * 清除 SQL 日志
+     */
+    public static function clearSqlLog(): void
+    {
+        \Kode\Database\Db\Db::clearQueryLog();
+    }
+
+    /**
+     * 启用 SQL 日志
+     */
+    public static function enableSqlLog(): void
+    {
+        \Kode\Database\Db\Db::enableQueryLog(true);
+    }
+
+    /**
+     * 禁用 SQL 日志
+     */
+    public static function disableSqlLog(): void
+    {
+        \Kode\Database\Db\Db::enableQueryLog(false);
+    }
+
+    /**
+     * 获取最后执行的 SQL
+     *
+     * @return string
+     */
+    public static function getLastSql(): string
+    {
+        return \Kode\Database\Db\Db::getLastSql();
+    }
+
+    /**
+     * 检查是否已存在（静态方法）
+     *
+     * @param mixed $id 主键值
+     * @return bool
+     */
+    public static function existsById(mixed $id): bool
+    {
+        return static::find($id) !== null;
+    }
+
+    /**
+     * 批量检查是否存在
+     *
+     * @param array $ids 主键值数组
+     * @return array 存在的 ID 数组
+     */
+    public static function existsByIds(array $ids): array
+    {
+        if (empty($ids)) {
+            return [];
+        }
+
+        $results = static::whereIn('id', $ids)->get();
+        return array_column($results, 'id');
+    }
+
+    /**
+     * 获取最后一条记录
+     *
+     * @param string $orderField 排序字段
+     * @return static|null
+     */
+    public static function last(string $orderField = 'id'): ?static
+    {
+        $instance = new static();
+        $result = Db::table($instance->table)
+            ->orderBy($orderField, 'desc')
+            ->first();
+
+        if ($result) {
+            return $instance->newFromBuilder($result);
+        }
+
+        return null;
+    }
+
+    /**
+     * 获取第 N 条记录
+     *
+     * @param int $offset 偏移量
+     * @return static|null
+     */
+    public static function nth(int $offset): ?static
+    {
+        $instance = new static();
+        $result = Db::table($instance->table)
+            ->offset($offset)
+            ->limit(1)
+            ->first();
+
+        if ($result) {
+            return $instance->newFromBuilder($result);
+        }
+
+        return null;
+    }
 }

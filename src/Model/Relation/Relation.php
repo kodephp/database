@@ -45,7 +45,7 @@ abstract class Relation
     {
         $result = $this->find($id);
         if ($result === null) {
-            throw new \Kode\Database\Exception\QueryException("关联模型未找到");
+            throw \Kode\Database\Exception\ModelNotFoundException::notFound(get_class($this->related));
         }
         return $result;
     }
