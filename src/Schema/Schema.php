@@ -773,6 +773,66 @@ class Schema
     }
 
     /**
+     * 设置为主键
+     *
+     * @param array|string|null $columns 字段名
+     * @return $this
+     */
+    public function primary(array|string $columns = null): static
+    {
+        if ($columns !== null) {
+            $columns = is_array($columns) ? $columns : [$columns];
+            $this->primaryKey($columns);
+        } elseif (!empty($this->columns)) {
+            $lastColumn = end($this->columns);
+            if ($lastColumn instanceof Column) {
+                $this->primaryKey($lastColumn->getName());
+            }
+        }
+        return $this;
+    }
+
+    /**
+     * 获取表名
+     *
+     * @return string
+     */
+    public function getTable(): string
+    {
+        return $this->table;
+    }
+
+    /**
+     * 获取所有字段
+     *
+     * @return array
+     */
+    public function getColumns(): array
+    {
+        return $this->columns;
+    }
+
+    /**
+     * 获取所有索引
+     *
+     * @return array
+     */
+    public function getIndexes(): array
+    {
+        return $this->indexes;
+    }
+
+    /**
+     * 获取所有外键
+     *
+     * @return array
+     */
+    public function getForeignKeys(): array
+    {
+        return $this->foreignKeys;
+    }
+
+    /**
      * 生成 SQL
      *
      * @return string SQL 语句

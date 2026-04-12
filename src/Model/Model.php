@@ -262,7 +262,7 @@ abstract class Model implements ArrayAccess, JsonSerializable
         $result = static::find($id);
 
         if ($result === null) {
-            throw new \Kode\Database\Exception\QueryException("未找到记录: {$id}");
+            throw \Kode\Database\Exception\ModelNotFoundException::notFound(static::class);
         }
 
         return $result;
@@ -1385,7 +1385,7 @@ abstract class Model implements ArrayAccess, JsonSerializable
      */
     public static function has(array $conditions): bool
     {
-        return static::exists($conditions);
+        return static::checkExists($conditions);
     }
 
     /**

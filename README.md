@@ -1362,6 +1362,14 @@ Schema::create('demo', function (Schema $table) {
     $table->integer('votes')->unsigned();           // 无符号
     $table->string('remark')->comment('备注');      // 字段注释
     $table->string('phone')->after('email');       // 字段位置
+    $table->primary();                             // 将上一个字段设为主键
+    $table->primary(['id', 'code']);               // 复合主键
+
+    // Schema 工具方法
+    $table->getTable();      // 获取表名
+    $columns = $table->getColumns();   // 获取所有字段
+    $indexes = $table->getIndexes();   // 获取所有索引
+    $foreignKeys = $table->getForeignKeys(); // 获取所有外键
 
     // 常用字段
     $table->rememberToken();      // remember_token varchar(100)
