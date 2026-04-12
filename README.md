@@ -567,6 +567,23 @@ Db::table('users')->max('age');       // 获取最大值
 Db::table('users')->avg('age');       // 获取平均值
 Db::table('users')->sum('age');       // 获取总和
 Db::table('users')->countBy('status'); // 统计字段值出现次数
+Db::table('users')->countWithConditions(); // 带条件的记录数
+```
+
+### 查询分析
+
+```php
+// 查询分析
+Db::table('users')->where('status', 1)->explain();      // 执行 EXPLAIN
+Db::table('users')->where('status', 1)->explainInfo(); // 获取分析摘要
+Db::table('users')->where('status', 1)->toLookSql();  // 生成可读 SQL（用于调试）
+Db::table('users')->hasLimit();     // 检查是否设置 limit
+Db::table('users')->hasOffset();    // 检查是否设置 offset
+Db::table('users')->getLimit();     // 获取 limit 值
+Db::table('users')->getOffset();   // 获取 offset 值
+Db::table('users')->getOrderBy();   // 获取排序列
+Db::table('users')->getOrderDirection(); // 获取排序方向
+Db::table('users')->isSafe();       // 验证 SQL 安全性
 ```
 
 ### 表连接 (JOIN)
@@ -593,6 +610,25 @@ Db::table('users')
     ->leftJoin('orders', 'users.id', '=', 'orders.user_id')
     ->where('users.status', 1)
     ->get();
+```
+
+### Connection 连接类
+
+```php
+// 获取连接
+$conn = Db::connection('default');
+
+// 连接操作
+$conn->isConnected();           // 检查连接是否正常
+$conn->ping();                 // Ping 数据库检查连接
+$conn->reconnect();            // 重新连接
+$conn->getVersion();           // 获取数据库版本
+$conn->getCurrentDatabase();    // 获取当前数据库名
+$conn->getTables();            // 获取所有表名
+$conn->tableExists('users');   // 检查表是否存在
+$conn->getTableColumns('users'); // 获取表的所有字段
+$conn->getPrimaryKey('users');  // 获取表的主键字段
+$conn->getIndexes('users');     // 获取表的索引信息
 ```
 
 ### 增删改

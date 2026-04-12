@@ -1887,4 +1887,170 @@ class QueryBuilder
             $this->unionQueries[$key]['query'] = clone $union['query'];
         }
     }
+
+    /**
+     * 执行 explain 分析查询
+     *
+     * @return array
+     */
+    public function explain(): array
+    {
+        $sql = $this->buildSelect();
+        return $this->connection->select("EXPLAIN {$sql}", $this->bindings);
+    }
+
+    /**
+     * 获取查询摘要信息
+     *
+     * @return array
+     */
+    public function explainInfo(): array
+    {
+        $explain = $this->explain();
+        return [
+            'type' => $explain[0]['type'] ?? null,
+            'possible_keys' => $explain[0]['possible_keys'] ?? null,
+            'key' => $explain[0]['key'] ?? null,
+            'key_len' => $explain[0]['key_len'] ?? null,
+            'rows' => $explain[0]['rows'] ?? null,
+            'extra' => $explain[0]['Extra'] ?? null,
+        ];
+    }
+
+    /**
+     * 生成查找 SQL（用于调试）
+     *
+     * @return string
+     */
+    public function toLookSql(): string
+    {
+        $sql = $this->buildSelect();
+        $bindings = $this->bindings;
+
+        foreach ($bindings as $key => $value) {
+            if (is_int($key)) {
+                $sql = preg_replace('/\?/', "'" . addslashes((string) $value) . "'", $sql, 1);
+            } else {
+                $sql = str_replace($key, "'" . addslashes((string) $value) . "'", $sql);
+            }
+        }
+
+        return $sql;
+    }
+
+    /**
+     * 获取记录数（带条件计数）
+     *
+     * @param string|null $column 计数字段
+     * @return int
+     */
+    public function countWithConditions(?string $column = null): int
+    {
+        $originalColumns = $this->columns;
+        $originalLimit = $this->limit;
+        $originalOffset = $this->offset;
+
+        $this->columns = ['*'];
+        $this->limit = null;
+        $this->offset = null;
+
+        $field = $column ?? '*';
+        $sql = "SELECT COUNT({$field}) as aggregate FROM {$this->table}";
+
+        if (!empty($this->wheres)) {
+            $sql .= ' WHERE ' . implode(' AND ', $this->wheres);
+        }
+
+        if ($this->groupBy) {
+            $sql .= " GROUP BY {$this->groupBy}";
+        }
+
+        $result = $this->connection->select($sql, $this->bindings);
+        $count = (int) ($result[0]['aggregate'] ?? 0);
+
+        $this->columns = $originalColumns;
+        $this->limit = $originalLimit;
+        $this->offset = $originalOffset;
+
+        return $count;
+    }
+
+    /**
+     * 检查limit是否设置
+     *
+     * @return bool
+     */
+    public function hasLimit(): bool
+    {
+        return $this->limit !== null;
+    }
+
+    /**
+     * 检查offset是否设置
+     *
+     * @return bool
+     */
+    public function hasOffset(): bool
+    {
+        return $this->offset !== null;
+    }
+
+    /**
+     * 获取limit值
+     *
+     * @return int|null
+     */
+    public function getLimit(): ?int
+    {
+        return $this->limit;
+    }
+
+    /**
+     * 获取offset值
+     *
+     * @return int|null
+     */
+    public function getOffset(): ?int
+    {
+        return $this->offset;
+    }
+
+    /**
+     * 获取排序列
+     *
+     * @return string
+     */
+    public function getOrderBy(): string
+    {
+        return $this->orderBy;
+    }
+
+    /**
+     * 获取排序方向
+     *
+     * @return string
+     */
+    public function getOrderDirection(): string
+    {
+        return $this->orderDirection;
+    }
+
+    /**
+     * 验证SQL安全性（基本检查）
+     *
+     * @return bool
+     */
+    public function isSafe(): bool
+    {
+        $sql = $this->buildSelect();
+
+        $dangerous = ['DROP ', 'DELETE ', 'TRUNCATE ', 'ALTER ', 'CREATE ', 'INSERT ', 'UPDATE ', 'REPLACE '];
+        foreach ($dangerous as $keyword) {
+            if (stripos($sql, $keyword) !== false) {
+                return false;
+            }
+        }
+
+        return true;
+    }
 }

@@ -282,4 +282,139 @@ class Connection
     {
         return new static($this->name, $this->database);
     }
+
+    /**
+     * 检查连接是否正常
+     *
+     * @return bool
+     */
+    public function isConnected(): bool
+    {
+        try {
+            $connection = $this->getConnection();
+            return $connection->isConnected();
+        } catch (\Throwable) {
+            return false;
+        }
+    }
+
+    /**
+     * Ping 数据库检查连接
+     *
+     * @return bool
+     */
+    public function ping(): bool
+    {
+        try {
+            $this->statement('SELECT 1');
+            return true;
+        } catch (\Throwable) {
+            return false;
+        }
+    }
+
+    /**
+     * 获取所有表名
+     *
+     * @return array
+     */
+    public function getTables(): array
+    {
+        $result = $this->select('SHOW TABLES');
+        if (empty($result)) {
+            return [];
+        }
+        $key = array_key_first($result[0]);
+        return array_column($result, $key);
+    }
+
+    /**
+     * 检查表是否存在
+     *
+     * @param string $table 表名
+     * @return bool
+     */
+    public function tableExists(string $table): bool
+    {
+        return in_array($table, $this->getTables(), true);
+    }
+
+    /**
+     * 获取表的所有字段
+     *
+     * @param string $table 表名
+     * @return array
+     */
+    public function getTableColumns(string $table): array
+    {
+        $result = $this->select("SHOW COLUMNS FROM {$table}");
+        return array_column($result, 'Field');
+    }
+
+    /**
+     * 获取表的主键字段
+     *
+     * @param string $table 表名
+     * @return array
+     */
+    public function getPrimaryKey(string $table): array
+    {
+        $result = $this->select("SHOW INDEX FROM {$table} WHERE Key_name = 'PRIMARY'");
+        return array_column($result, 'Column_name');
+    }
+
+    /**
+     * 获取表的索引信息
+     *
+     * @param string $table 表名
+     * @return array
+     */
+    public function getIndexes(string $table): array
+    {
+        return $this->select("SHOW INDEX FROM {$table}");
+    }
+
+    /**
+     * 获取数据库版本
+     *
+     * @return string
+     */
+    public function getVersion(): string
+    {
+        $result = $this->select('SELECT VERSION() as version');
+        return $result[0]['version'] ?? '';
+    }
+
+    /**
+     * 获取当前数据库名
+     *
+     * @return string|null
+     */
+    public function getCurrentDatabase(): ?string
+    {
+        $result = $this->select('SELECT DATABASE() as db');
+        return $result[0]['db'] ?? null;
+    }
+
+    /**
+     * 重新连接
+     *
+     * @return bool
+     */
+    public function reconnect(): bool
+    {
+        try {
+            $config = Db::getConfig($this->name);
+            $factory = new \Kode\Database\Connection\ConnectionFactory();
+            $connection = $factory->make($config);
+
+            if ($this->database !== null) {
+                $connection->setDatabase($this->database);
+            }
+
+            return true;
+        } catch (\Throwable) {
+            return false;
+        }
+    }
 }
