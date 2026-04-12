@@ -1549,4 +1549,137 @@ abstract class Model implements ArrayAccess, JsonSerializable
 
         return null;
     }
+
+    /**
+     * 刷新模型（从数据库重新加载）
+     *
+     * @return $this
+     */
+    public function refresh(): static
+    {
+        if (!$this->exists) {
+            return $this;
+        }
+
+        $fresh = static::find($this->getKey());
+        if ($fresh !== null) {
+            $this->setAttributes($fresh->getAttributes(), true);
+        }
+
+        return $this;
+    }
+
+    /**
+     * 检查模型是否干净（没有未保存的更改）
+     *
+     * @return bool
+     */
+    public function isClean(): bool
+    {
+        return empty($this->changes);
+    }
+
+    /**
+     * 标记属性为已保存
+     *
+     * @return $this
+     */
+    public function markAsClean(): static
+    {
+        $this->syncChanges();
+        return $this;
+    }
+
+    /**
+     * 获取原始属性
+     *
+     * @param string|null $key 属性名
+     * @return mixed
+     */
+    public function getRawAttr(?string $key = null): mixed
+    {
+        if ($key === null) {
+            return $this->attributes;
+        }
+
+        return $this->attributes[$key] ?? null;
+    }
+
+    /**
+     * 获取原始数据
+     *
+     * @return array
+     */
+    public function getRawOriginal(): array
+    {
+        return $this->original;
+    }
+
+    /**
+     * 检查两个模型是否相同
+     *
+     * @param mixed $model 模型
+     * @return bool
+     */
+    public function is(mixed $model): bool
+    {
+        if (!$model instanceof static) {
+            return false;
+        }
+
+        return $this->getKey() === $model->getKey() && static::class === get_class($model);
+    }
+
+    /**
+     * 比较模型差异
+     *
+     * @param Model $model 比较的模型
+     * @return array 差异数组 ['属性名' => ['old' => 值, 'new' => 值]]
+     */
+    public function diff(Model $model): array
+    {
+        $diff = [];
+
+        foreach ($this->attributes as $key => $value) {
+            $original = $this->original[$key] ?? null;
+            $new = $model->attributes[$key] ?? null;
+
+            if ($original !== $new) {
+                $diff[$key] = ['old' => $original, 'new' => $new];
+            }
+        }
+
+        return $diff;
+    }
+
+    /**
+     * 获取模型年龄
+     *
+     * @param string $field 创建时间字段
+     * @return string
+     */
+    public function age(string $field = 'created_at'): string
+    {
+        $timestamp = $this->getAttribute($field);
+
+        if ($timestamp === null) {
+            return '未知';
+        }
+
+        $diff = time() - strtotime($timestamp);
+
+        if ($diff < 60) {
+            return $diff . '秒';
+        } elseif ($diff < 3600) {
+            return floor($diff / 60) . '分钟';
+        } elseif ($diff < 86400) {
+            return floor($diff / 3600) . '小时';
+        } elseif ($diff < 2592000) {
+            return floor($diff / 86400) . '天';
+        } elseif ($diff < 31536000) {
+            return floor($diff / 2592000) . '个月';
+        }
+
+        return floor($diff / 31536000) . '年';
+    }
 }
