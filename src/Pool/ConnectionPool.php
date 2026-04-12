@@ -77,8 +77,9 @@ class ConnectionPool implements PoolInterface
      */
     public function get(): mixed
     {
-        // Swoole 协程环境
-        if ($this->channel && class_exists(\Swoole\Coroutine\Channel::class)) {
+        $channelClass = \Swoole\Coroutine\Channel::class;
+
+        if ($this->channel && class_exists($channelClass)) {
             $connection = $this->channel->pop($this->maxWaitTime);
             if ($connection !== false) {
                 return $connection;
@@ -86,22 +87,22 @@ class ConnectionPool implements PoolInterface
             throw ConnectionException::timeout('ConnectionPool');
         }
 
-        // Fiber 协程环境
         if (class_exists(\Fiber::class)) {
-            $fiberId = \Fiber::getCurrent()->getId();
-            if (isset($this->connections[$fiberId])) {
-                return $this->connections[$fiberId];
+            $fiber = \Fiber::getCurrent();
+            if ($fiber !== null) {
+                $fiberId = $fiber->getId();
+                if (isset($this->connections[$fiberId])) {
+                    return $this->connections[$fiberId];
+                }
             }
         }
 
-        // 普通环境
         if (!empty($this->connections)) {
             $connection = array_pop($this->connections);
             $this->inUseConnections[spl_object_hash($connection)] = time();
             return $connection;
         }
 
-        // 创建新连接
         if (count($this->inUseConnections) < $this->maxConnections) {
             $connection = $this->connector->connect($this->config);
             $this->inUseConnections[spl_object_hash($connection)] = time();
