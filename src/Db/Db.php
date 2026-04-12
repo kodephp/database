@@ -1026,6 +1026,81 @@ class Db
     }
 
     /**
+     * 检查表是否存在
+     *
+     * @param string $table 表名
+     * @return bool
+     */
+    public static function hasTable(string $table): bool
+    {
+        $tables = self::tables();
+        return in_array($table, $tables, true);
+    }
+
+    /**
+     * 检查字段是否存在
+     *
+     * @param string $table 表名
+     * @param string $column 字段名
+     * @return bool
+     */
+    public static function hasColumn(string $table, string $column): bool
+    {
+        $columns = self::columns($table);
+        return in_array($column, $columns, true);
+    }
+
+    /**
+     * 获取所有表名
+     *
+     * @return array
+     */
+    public static function tables(): array
+    {
+        $result = self::select('SHOW TABLES');
+        if (empty($result)) {
+            return [];
+        }
+        $key = array_key_first($result[0] ?? []);
+        return array_column($result, $key);
+    }
+
+    /**
+     * 获取表字段信息
+     *
+     * @param string $table 表名
+     * @return array
+     */
+    public static function columns(string $table): array
+    {
+        $result = self::select("SHOW COLUMNS FROM {$table}");
+        return array_column($result, 'Field');
+    }
+
+    /**
+     * 获取表索引信息
+     *
+     * @param string $table 表名
+     * @return array
+     */
+    public static function indexes(string $table): array
+    {
+        return self::select("SHOW INDEX FROM {$table}");
+    }
+
+    /**
+     * 获取表主键信息
+     *
+     * @param string $table 表名
+     * @return array
+     */
+    public static function primaryKeys(string $table): array
+    {
+        $result = self::select("SHOW INDEX FROM {$table} WHERE Key_name = 'PRIMARY'");
+        return array_column($result, 'Column_name');
+    }
+
+    /**
      * 设置查询日志
      *
      * @param bool $enabled 是否启用

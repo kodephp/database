@@ -34,7 +34,7 @@ class PoolManager
         $driver = $driver ?? self::$driver;
 
         if (!isset(self::$pools[$driver])) {
-            throw new ConnectionException("连接池未初始化: {$driver}");
+            throw ConnectionException::make($driver, "连接池未初始化: {$driver}");
         }
 
         return self::$pools[$driver];

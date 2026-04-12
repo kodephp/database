@@ -633,12 +633,7 @@ class QueryBuilder
         try {
             return $this->connection->insert($sql, $values);
         } catch (\Throwable $e) {
-            throw new QueryException(
-                "插入失败: {$e->getMessage()}",
-                previous: $e,
-                sql: $sql,
-                bindings: $values
-            );
+            throw new QueryException($sql, $values, "插入失败: {$e->getMessage()}", 0, $e);
         }
     }
 
@@ -671,12 +666,7 @@ class QueryBuilder
         try {
             return $this->connection->insert($sql, $values);
         } catch (\Throwable $e) {
-            throw new QueryException(
-                "批量插入失败: {$e->getMessage()}",
-                previous: $e,
-                sql: $sql,
-                bindings: $values
-            );
+            throw new QueryException($sql, $values, "批量插入失败: {$e->getMessage()}", 0, $e);
         }
     }
 
@@ -708,12 +698,7 @@ class QueryBuilder
         try {
             return $this->connection->update($sql, $values);
         } catch (\Throwable $e) {
-            throw new QueryException(
-                "更新失败: {$e->getMessage()}",
-                previous: $e,
-                sql: $sql,
-                bindings: $values
-            );
+            throw new QueryException($sql, $values, "更新失败: {$e->getMessage()}", 0, $e);
         }
     }
 
@@ -738,12 +723,7 @@ class QueryBuilder
         try {
             return $this->connection->update($sql, $bindings);
         } catch (\Throwable $e) {
-            throw new QueryException(
-                "自增失败: {$e->getMessage()}",
-                previous: $e,
-                sql: $sql,
-                bindings: $bindings
-            );
+            throw new QueryException($sql, $bindings, "自增失败: {$e->getMessage()}", 0, $e);
         }
     }
 
@@ -768,12 +748,7 @@ class QueryBuilder
         try {
             return $this->connection->update($sql, $bindings);
         } catch (\Throwable $e) {
-            throw new QueryException(
-                "自减失败: {$e->getMessage()}",
-                previous: $e,
-                sql: $sql,
-                bindings: $bindings
-            );
+            throw new QueryException($sql, $bindings, "自减失败: {$e->getMessage()}", 0, $e);
         }
     }
 
@@ -791,12 +766,7 @@ class QueryBuilder
         try {
             return $this->connection->delete($sql, $this->bindings);
         } catch (\Throwable $e) {
-            throw new QueryException(
-                "删除失败: {$e->getMessage()}",
-                previous: $e,
-                sql: $sql,
-                bindings: $this->bindings
-            );
+            throw new QueryException($sql, $this->bindings, "删除失败: {$e->getMessage()}", 0, $e);
         }
     }
 
@@ -808,11 +778,7 @@ class QueryBuilder
         try {
             return $this->connection->statement($sql);
         } catch (\Throwable $e) {
-            throw new QueryException(
-                "语句执行失败: {$e->getMessage()}",
-                previous: $e,
-                sql: $sql
-            );
+            throw new QueryException($sql, [], "语句执行失败: {$e->getMessage()}", 0, $e);
         }
     }
 
@@ -854,12 +820,7 @@ class QueryBuilder
         try {
             return $this->connection->select($sql, $this->bindings);
         } catch (\Throwable $e) {
-            throw new QueryException(
-                "查询失败: {$e->getMessage()}",
-                previous: $e,
-                sql: $sql,
-                bindings: $this->bindings
-            );
+            throw new QueryException($sql, $this->bindings, "查询失败: {$e->getMessage()}", 0, $e);
         }
     }
 

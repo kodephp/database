@@ -723,6 +723,15 @@ Db::truncateTable('users');              // 清空表（自增归零）
 Db::dropTable('users');                  // 删除表
 Db::dropTables(['users', 'orders']);     // 删除多个表
 
+// 表信息查询
+Db::hasTable('users');                  // 检查表是否存在
+Db::hasColumn('users', 'email');        // 检查字段是否存在
+$tables = Db::tables();                 // 获取所有表名
+$columns = Db::columns('users');       // 获取表字段列表
+$indexes = Db::indexes('users');        // 获取表索引信息
+$primaryKeys = Db::primaryKeys('users'); // 获取主键字段
+$version = Db::getVersion();            // 获取数据库版本
+
 // 执行 SQL 文件
 $results = Db::executeFile('/path/to.sql');
 
