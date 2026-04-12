@@ -35,4 +35,14 @@ class DatabaseException extends \RuntimeException
     {
         return $this->bindings;
     }
+
+    public static function make(string $message = '', int $code = 0, ?Throwable $previous = null): static
+    {
+        return new static($message, $code, $previous);
+    }
+
+    public static function sql(string $sql, array $bindings = [], ?string $message = null): static
+    {
+        return new static($message ?? "SQL Error: {$sql}", 0, null, $sql, $bindings);
+    }
 }

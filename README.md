@@ -1624,8 +1624,8 @@ use Kode\Database\Exception\ModelNotFoundException;
 use Kode\Database\Exception\QueryException;
 use Kode\Database\Exception\ConnectionException;
 
+// 查询异常
 try {
-    // 查询异常
     $result = Db::table('users')->where('id', 1)->first();
 } catch (QueryException $e) {
     echo "SQL 错误: " . $e->getMessage();
@@ -1633,20 +1633,37 @@ try {
     echo "参数: " . json_encode($e->getBindings());
 }
 
+// 使用静态方法创建异常
+throw QueryException::tableNotFound('users');
+throw QueryException::columnNotFound('email', 'users');
+throw QueryException::sqlError('SELECT * FROM invalid', []);
+
 // 连接异常
 try {
     Db::connect('invalid_database');
 } catch (ConnectionException $e) {
     echo "连接失败: " . $e->getMessage();
+    echo "连接名: " . $e->getConnectionName();
+    echo "主机: " . $e->getHost();
+    echo "端口: " . $e->getPort();
 }
+
+// 使用静态方法创建异常
+throw ConnectionException::cannotConnect('mysql', '127.0.0.1', 3306);
+throw ConnectionException::timeout('mysql');
+throw ConnectionException::refused('mysql', '127.0.0.1', 3306);
 
 // 模型未找到异常
 try {
     $user = Db::table('users')->findOrFail(['id' => 9999]);
 } catch (ModelNotFoundException $e) {
-    echo "模型未找到: " . $e->getMessage();
-    echo "模型类: " . $e->getModel();
+    echo "未找到: " . $e->getMessage();
+    echo "模型: " . $e->getModel();
 }
+
+// 使用静态方法创建异常
+throw ModelNotFoundException::notFound('User');
+throw ModelNotFoundException::make('User');
 
 // 通用数据库异常
 try {
@@ -1654,6 +1671,9 @@ try {
 } catch (DatabaseException $e) {
     echo "数据库错误: " . $e->getMessage();
 }
+
+// 使用静态方法创建异常
+throw DatabaseException::sql('SELECT * FROM users', [], 'Custom error message');
 ```
 
 ---

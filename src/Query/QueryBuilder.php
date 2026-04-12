@@ -1635,17 +1635,15 @@ class QueryBuilder
      * 查找或失败（抛出异常）
      *
      * @param array $attributes 查找条件
-     * @param string|null $exceptionClass 异常类名
      * @return array
-     * @throws \Throwable
+     * @throws \Kode\Database\Exception\ModelNotFoundException
      */
-    public function findOrFail(array $attributes, ?string $exceptionClass = null): array
+    public function findOrFail(array $attributes): array
     {
         $result = $this->where($attributes)->first();
 
         if ($result === null) {
-            $exception = $exceptionClass ?? \Kode\Database\Exception\ModelNotFoundException::class;
-            throw new $exception('Record not found');
+            throw \Kode\Database\Exception\ModelNotFoundException::notFound('Record');
         }
 
         return $result;
@@ -1654,17 +1652,15 @@ class QueryBuilder
     /**
      * 首条记录或失败（抛出异常）
      *
-     * @param string|null $exceptionClass 异常类名
      * @return array
-     * @throws \Throwable
+     * @throws \Kode\Database\Exception\ModelNotFoundException
      */
-    public function firstOrFail(?string $exceptionClass = null): array
+    public function firstOrFail(): array
     {
         $result = $this->first();
 
         if ($result === null) {
-            $exception = $exceptionClass ?? \Kode\Database\Exception\ModelNotFoundException::class;
-            throw new $exception('Record not found');
+            throw \Kode\Database\Exception\ModelNotFoundException::notFound('Record');
         }
 
         return $result;
@@ -1760,7 +1756,7 @@ class QueryBuilder
         if ($count === 1) {
             return $this->orderByRaw('RAND()')->first() ?? [];
         }
-        return $this->orderByRaw('RAND()')->limit($count)->get()->toArray();
+        return $this->orderByRaw('RAND()')->limit($count)->get();
     }
 
     /**
