@@ -551,6 +551,22 @@ Db::table('users')->clearLimit(); // 清空 limit/offset
 Db::table('users')->reset(); // 重置所有条件
 Db::table('users')->toInfo(); // 获取查询信息摘要
 Db::table('users')->copy(); // 复制查询构建器
+Db::table('users')->notExists(); // 检查记录是否不存在
+Db::table('users')->countBy('status'); // 统计字段值出现次数
+Db::table('users')->tap(function($q) { /* ... */ }); // 检验查询条件
+Db::table('users')->withScope(function($q) { /* ... */ }); // 添加全局作用域
+```
+
+### 聚合统计
+
+```php
+// 聚合方法
+Db::table('users')->count();          // 统计数量
+Db::table('users')->min('age');       // 获取最小值
+Db::table('users')->max('age');       // 获取最大值
+Db::table('users')->avg('age');       // 获取平均值
+Db::table('users')->sum('age');       // 获取总和
+Db::table('users')->countBy('status'); // 统计字段值出现次数
 ```
 
 ### 表连接 (JOIN)

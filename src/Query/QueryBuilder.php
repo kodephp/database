@@ -1793,7 +1793,89 @@ class QueryBuilder
         if ($count === 1) {
             return $this->orderByRaw('RAND()')->first() ?? [];
         }
+
         return $this->orderByRaw('RAND()')->limit($count)->get();
+    }
+
+    /**
+     * 检查记录是否不存在
+     *
+     * @return bool
+     */
+    public function notExists(): bool
+    {
+        return !$this->exists();
+    }
+
+    /**
+     * 统计字段值出现次数
+     *
+     * @param string $field 字段名
+     * @param string|null $index 分组索引字段
+     * @return array
+     */
+    public function countBy(string $field, ?string $index = null): array
+    {
+        $sql = "SELECT {$field}, COUNT(*) as count FROM {$this->table}";
+
+        if (!empty($this->wheres)) {
+            $sql .= ' WHERE ' . implode(' AND ', $this->wheres);
+        }
+
+        $sql .= " GROUP BY {$field}";
+
+        $results = $this->connection->select($sql, $this->bindings);
+
+        if ($index === null) {
+            $result = [];
+            foreach ($results as $row) {
+                $key = $row[$field] ?? array_values($row)[0];
+                $result[$key] = $row['count'];
+            }
+            return $result;
+        }
+
+        $result = [];
+        foreach ($results as $row) {
+            $result[$row[$index]] = $row;
+        }
+        return $result;
+    }
+
+    /**
+     * 检验查询条件
+     *
+     * @param callable $callback 回调函数
+     * @return $this
+     */
+    public function tap(callable $callback): static
+    {
+        $callback($this);
+        return $this;
+    }
+
+    /**
+     * 添加全局作用域
+     *
+     * @param callable $scope 作用域回调
+     * @return $this
+     */
+    public function withScope(callable $scope): static
+    {
+        $scope($this);
+        return $this;
+    }
+
+    /**
+     * 生成原始 SQL 表达式
+     *
+     * @param string $expression 表达式
+     * @param array $bindings 绑定参数
+     * @return array
+     */
+    public function raw(string $expression, array $bindings = []): array
+    {
+        return ['raw' => true, 'expression' => $expression, 'bindings' => $bindings];
     }
 
     /**
