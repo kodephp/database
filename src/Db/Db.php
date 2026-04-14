@@ -72,10 +72,21 @@ class Db
 
     /**
      * 判断是否为读操作
+     * 根据 SQL 语句类型自动判断
      */
-    protected static function isReadOperation(): bool
+    protected static function isReadOperation(string $sql): bool
     {
-        return true;
+        $sql = trim(strtoupper($sql));
+
+        $readKeywords = ['SELECT', 'SHOW', 'DESCRIBE', 'DESC', 'EXPLAIN', 'CHECK', 'ANALYZE'];
+
+        foreach ($readKeywords as $keyword) {
+            if (str_starts_with($sql, $keyword)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**
@@ -166,6 +177,18 @@ class Db
     }
 
     /**
+     * 获取读查询构建器（强制使用从库）
+     *
+     * @example Db::tableRead('users')->select()->get()
+     */
+    public static function tableRead(string $table): QueryBuilder
+    {
+        $connection = self::getReadConnection();
+        $builder = new QueryBuilder($connection);
+        return $builder->from($table);
+    }
+
+    /**
      * 指定连接获取查询构建器
      *
      * @example Db::connection('slave')->table('users')->get()
@@ -177,13 +200,13 @@ class Db
     }
 
     /**
-     * 执行 SQL 查询
+     * 执行 SQL 查询（自动读写分离）
      *
      * @example Db::select('SELECT * FROM users WHERE id = ?', [1])
      */
     public static function select(string $sql, array $bindings = []): array
     {
-        $connection = self::getReadConnection();
+        $connection = self::isReadOperation($sql) ? self::getReadConnection() : self::getWriteConnection();
         return $connection->select($sql, $bindings);
     }
 

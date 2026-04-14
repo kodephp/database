@@ -1110,6 +1110,7 @@ User::updating(function (Model $user) {
 ```php
 use Kode\Database\Model\Model;
 use Kode\Database\Model\Observer;
+use Kode\Database\Model\ObserverManager;
 
 class UserObserver extends Observer
 {
@@ -1129,11 +1130,75 @@ class UserObserver extends Observer
     }
 }
 
-// 注册观察者
+// 注册观察者（方式一：模型注册）
 User::observe(UserObserver::class);
 
-// 移除观察者
-User::observe(UserObserver::class, false);
+// 方式二：使用 ObserverManager 批量管理
+ObserverManager::register(User::class, UserObserver::class);
+ObserverManager::register(Order::class, OrderObserver::class);
+
+// 检查观察者是否存在
+ObserverManager::has(User::class);  // true
+
+// 获取观察者
+$observer = ObserverManager::get(User::class);
+
+// 触发观察者事件（手动）
+ObserverManager::fire(User::class, 'created', $user);
+
+// 全局观察者（所有模型都会触发）
+ObserverManager::registerGlobal(function($model, $event) {
+    Log::info("模型事件: {$event}");
+}, '*');  // '*' 表示所有事件
+
+ObserverManager::registerGlobal(function($model, $event) {
+    // 只监听 created 事件
+    if ($event === 'created') {
+        Cache::clear('user_list');
+    }
+}, 'created');
+
+// 清除观察者
+ObserverManager::unregister(User::class);
+ObserverManager::clear();  // 清除所有
+```
+
+### 模型事件
+
+```php
+// 方式一：闭包注册
+User::creating(function ($user) {
+    $user->password = password_hash($user->password, PASSWORD_DEFAULT);
+});
+
+User::created(function ($user) {
+    Log::info("用户创建成功: {$user->id}");
+});
+
+// 方式二：观察者类
+class UserObserver
+{
+    public function creating(Model $user): void
+    {
+        $user->password = password_hash($user->password, PASSWORD_DEFAULT);
+    }
+
+    public function created(Model $user): void
+    {
+        Log::info("用户创建成功: {$user->id}");
+    }
+}
+
+// 注册
+User::observe(UserObserver::class);
+
+// 支持的事件
+// creating/created - 创建前/后
+// updating/updated - 更新前/后
+// saving/saved - 保存前/后（插入或更新）
+// deleting/deleted - 删除前/后
+// restoring/restored - 恢复前/后（软删除）
+// forceDeleting/forceDeleted - 强制删除前/后
 ```
 
 ---
