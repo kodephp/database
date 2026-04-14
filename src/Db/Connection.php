@@ -284,6 +284,148 @@ class Connection
     }
 
     /**
+     * 查询钩子回调
+     */
+    protected static array $beforeQueryCallbacks = [];
+    protected static array $afterQueryCallbacks = [];
+    protected static array $queryHooks = [];
+
+    /**
+     * 注册查询前钩子
+     *
+     * @param callable $callback 回调函数，参数: (string $sql, array $bindings, Connection $connection)
+     * @param string|null $connectionName 连接名，为 null 表示所有连接
+     */
+    public static function beforeQuery(callable $callback, ?string $connectionName = null): void
+    {
+        $key = $connectionName ?? '*';
+        if (!isset(self::$beforeQueryCallbacks[$key])) {
+            self::$beforeQueryCallbacks[$key] = [];
+        }
+        self::$beforeQueryCallbacks[$key][] = $callback;
+    }
+
+    /**
+     * 注册查询后钩子
+     *
+     * @param callable $callback 回调函数，参数: (string $sql, array $bindings, array $result, Connection $connection)
+     * @param string|null $connectionName 连接名，为 null 表示所有连接
+     */
+    public static function afterQuery(callable $callback, ?string $connectionName = null): void
+    {
+        $key = $connectionName ?? '*';
+        if (!isset(self::$afterQueryCallbacks[$key])) {
+            self::$afterQueryCallbacks[$key] = [];
+        }
+        self::$afterQueryCallbacks[$key][] = $callback;
+    }
+
+    /**
+     * 注册查询钩子（同时包含前后）
+     *
+     * @param array $hooks 钩子配置 ['before' => callable, 'after' => callable]
+     * @param string|null $connectionName 连接名
+     */
+    public static function registerQueryHook(array $hooks, ?string $connectionName = null): void
+    {
+        $key = $connectionName ?? '*';
+        if (!isset(self::$queryHooks[$key])) {
+            self::$queryHooks[$key] = [];
+        }
+        self::$queryHooks[$key][] = $hooks;
+    }
+
+    /**
+     * 触发查询前钩子
+     */
+    protected function triggerBeforeQuery(string $sql, array $bindings): array
+    {
+        $sql = trim($sql);
+        $bindings = $bindings ?? [];
+
+        $this->executeGlobalHook(self::$beforeQueryCallbacks, $sql, $bindings);
+
+        if ($this->name !== null) {
+            $this->executeGlobalHook(self::$beforeQueryCallbacks, $sql, $bindings);
+        }
+
+        return [$sql, $bindings];
+    }
+
+    /**
+     * 触发查询后钩子
+     */
+    protected function triggerAfterQuery(string $sql, array $bindings, array $result): array
+    {
+        $this->executeGlobalHook(self::$afterQueryCallbacks, $sql, $bindings, $result);
+
+        if ($this->name !== null) {
+            $this->executeGlobalHook(self::$afterQueryCallbacks, $sql, $bindings, $result);
+        }
+
+        return $result;
+    }
+
+    /**
+     * 执行全局钩子
+     */
+    protected function executeGlobalHook(array &$hooks, string $sql, array $bindings, ?array $result = null): void
+    {
+        $keys = ['*'];
+        if ($this->name !== null) {
+            $keys[] = $this->name;
+        }
+
+        foreach ($keys as $key) {
+            if (!isset($hooks[$key])) {
+                continue;
+            }
+
+            foreach ($hooks[$key] as $callback) {
+                if ($result !== null && isset($callback['after'])) {
+                    $callback['after']($sql, $bindings, $result, $this);
+                } elseif ($result === null && isset($callback['before'])) {
+                    $callback['before']($sql, $bindings, $this);
+                }
+            }
+        }
+    }
+
+    /**
+     * 获取所有查询前钩子
+     */
+    public static function getBeforeQueryHooks(?string $connectionName = null): array
+    {
+        $key = $connectionName ?? '*';
+        return self::$beforeQueryCallbacks[$key] ?? [];
+    }
+
+    /**
+     * 获取所有查询后钩子
+     */
+    public static function getAfterQueryHooks(?string $connectionName = null): array
+    {
+        $key = $connectionName ?? '*';
+        return self::$afterQueryCallbacks[$key] ?? [];
+    }
+
+    /**
+     * 清除查询钩子
+     */
+    public static function clearQueryHooks(?string $connectionName = null): void
+    {
+        if ($connectionName === null) {
+            self::$beforeQueryCallbacks = [];
+            self::$afterQueryCallbacks = [];
+            self::$queryHooks = [];
+        } else {
+            unset(self::$beforeQueryCallbacks[$connectionName]);
+            unset(self::$afterQueryCallbacks[$connectionName]);
+            unset(self::$queryHooks[$connectionName]);
+        }
+    }
+
+    /**
      * 检查连接是否正常
      *
      * @return bool

@@ -1199,6 +1199,100 @@ User::observe(UserObserver::class);
 // deleting/deleted - 删除前/后
 // restoring/restored - 恢复前/后（软删除）
 // forceDeleting/forceDeleted - 强制删除前/后
+
+### 一次性事件
+
+```php
+// 注册一次性事件（执行后自动清除）
+User::once('creating', function ($user) {
+    $user->temp_field = '临时值';  // 只在第一次创建时生效
+});
+
+// 获取所有一次性事件
+User::getOnceEvents();  // ['creating']
+
+// 清除一次性事件
+User::clearOnceEvents();  // 清除所有
+User::clearOnceEvents('creating');  // 清除指定
+```
+
+### 队列事件
+
+```php
+// 注册队列事件（需要队列处理器）
+User::queue('created', function ($user) {
+    // 发送欢迎邮件等异步操作
+});
+
+// 获取所有队列事件
+User::getQueuedEvents();  // ['created']
+
+// 清除队列事件
+User::clearQueuedEvents();  // 清除所有
+```
+
+### 事件优先级
+
+```php
+// 设置事件优先级（数字越大优先级越高）
+User::setPriority('creating', 100);
+User::setPriority('saving', 50);
+
+// 获取已注册的事件
+User::getRegisteredEvents();  // ['creating', 'saving', ...]
+
+// 检查事件是否已注册
+User::hasEvent('creating');  // true
+
+// 批量注册事件
+User::registerEvents([
+    'creating' => function ($user) { /* ... */ },
+    'created' => function ($user) { /* ... */ },
+]);
+
+// 清除事件
+User::clearEvent('creating');  // 清除单个
+User::clearAllEvent();  // 清除所有
+User::clearAllEvents();  // 清除所有事件（含观察者、一次性、队列）
+```
+
+### Connection 查询钩子
+
+```php
+use Kode\Database\Db\Connection;
+
+// 注册查询前钩子（所有连接）
+Connection::beforeQuery(function ($sql, $bindings, $conn) {
+    Log::debug("SQL: {$sql}", $bindings);
+});
+
+// 注册查询前钩子（指定连接）
+Connection::beforeQuery(function ($sql, $bindings, $conn) {
+    Log::debug("Slave SQL: {$sql}");
+}, 'slave');
+
+// 注册查询后钩子
+Connection::afterQuery(function ($sql, $bindings, $result, $conn) {
+    Log::info("查询完成: {$sql}", ['rows' => count($result)]);
+});
+
+// 同时注册前后钩子
+Connection::registerQueryHook([
+    'before' => function ($sql, $bindings, $conn) {
+        // 查询前
+    },
+    'after' => function ($sql, $bindings, $result, $conn) {
+        // 查询后
+    }
+], 'default');
+
+// 获取钩子
+Connection::getBeforeQueryHooks();
+Connection::getAfterQueryHooks();
+
+// 清除钩子
+Connection::clearQueryHooks();  // 清除所有
+Connection::clearQueryHooks('slave');  // 清除指定
 ```
 
 ---

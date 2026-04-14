@@ -6,12 +6,15 @@ namespace Kode\Database\Model;
 
 /**
  * 模型事件钩子
- * 支持增删改查前后操作、观察者模式
+ * 支持增删改查前后操作、观察者模式、队列、 once 事件
  */
 trait ModelEvent
 {
     protected static array $dispatcher = [];
     protected static array $observers = [];
+    protected static array $onceEvents = [];
+    protected static array $queuedEvents = [];
+    protected static array $eventPriorities = [];
 
     /**
      * 注册模型事件
@@ -56,16 +59,21 @@ trait ModelEvent
         $class = static::class;
         $result = true;
 
-        // 触发注册的回调
-        if (isset(self::$dispatcher[$class][$event])) {
-            $callback = self::$dispatcher[$class][$event];
-            if ($callback instanceof \Closure) {
-                $result = $callback($this);
+        // 触发注册的回调（带优先级）
+        $callbacks = self::getEventCallbacks($class, $event);
+        foreach ($callbacks as $priority => $callback) {
+            if (is_array($callback)) {
+                foreach ($callback as $cb) {
+                    $result = $this->executeCallback($cb, $event);
+                    if ($result === false) {
+                        return false;
+                    }
+                }
             } else {
-                $result = call_user_func($callback, $this);
-            }
-            if ($result === false) {
-                return false;
+                $result = $this->executeCallback($callback, $event);
+                if ($result === false) {
+                    return false;
+                }
             }
         }
 
@@ -79,6 +87,33 @@ trait ModelEvent
         }
 
         return $result;
+    }
+
+    /**
+     * 执行回调
+     */
+    protected function executeCallback(callable $callback, string $event): mixed
+    {
+        if ($callback instanceof \Closure) {
+            return $callback($this, $event);
+        }
+        return call_user_func($callback, $this, $event);
+    }
+
+    /**
+     * 获取事件回调（带优先级排序）
+     */
+    protected static function getEventCallbacks(string $class, string $event): array
+    {
+        $callbacks = [];
+
+        if (isset(self::$dispatcher[$class][$event])) {
+            $priority = self::$eventPriorities[$class][$event] ?? 0;
+            $callbacks[$priority] = self::$dispatcher[$class][$event];
+        }
+
+        krsort($callbacks);
+        return $callbacks;
     }
 
     /**
@@ -178,6 +213,160 @@ trait ModelEvent
     }
 
     /**
+     * 注册一次性事件（执行后自动清除）
+     */
+    public static function once(string $event, callable $callback): void
+    {
+        $class = static::class;
+        if (!isset(self::$onceEvents[$class])) {
+            self::$onceEvents[$class] = [];
+        }
+        self::$onceEvents[$class][$event] = $callback;
+    }
+
+    /**
+     * 触发一次性事件
+     */
+    protected function fireOnceEvent(string $event): mixed
+    {
+        $class = static::class;
+
+        if (!isset(self::$onceEvents[$class][$event])) {
+            return null;
+        }
+
+        $callback = self::$onceEvents[$class][$event];
+        unset(self::$onceEvents[$class][$event]);
+
+        return $this->executeCallback($callback, $event);
+    }
+
+    /**
+     * 注册队列事件（异步执行）
+     */
+    public static function queue(string $event, callable $callback): void
+    {
+        $class = static::class;
+        if (!isset(self::$queuedEvents[$class])) {
+            self::$queuedEvents[$class] = [];
+        }
+        self::$queuedEvents[$class][$event][] = $callback;
+    }
+
+    /**
+     * 触发队列事件（需要队列处理器）
+     */
+    protected function fireQueuedEvent(string $event): void
+    {
+        $class = static::class;
+
+        if (!isset(self::$queuedEvents[$class][$event])) {
+            return;
+        }
+
+        foreach (self::$queuedEvents[$class][$event] as $callback) {
+            $this->executeCallback($callback, $event);
+        }
+    }
+
+    /**
+     * 设置事件优先级
+     */
+    public static function setPriority(string $event, int $priority): void
+    {
+        $class = static::class;
+        if (!isset(self::$eventPriorities[$class])) {
+            self::$eventPriorities[$class] = [];
+        }
+        self::$eventPriorities[$class][$event] = $priority;
+    }
+
+    /**
+     * 获取所有已注册的事件
+     */
+    public static function getRegisteredEvents(): array
+    {
+        $class = static::class;
+        return array_keys(self::$dispatcher[$class] ?? []);
+    }
+
+    /**
+     * 检查事件是否已注册
+     */
+    public static function hasEvent(string $event): bool
+    {
+        $class = static::class;
+        return isset(self::$dispatcher[$class][$event]);
+    }
+
+    /**
+     * 批量注册事件
+     */
+    public static function registerEvents(array $events): void
+    {
+        foreach ($events as $event => $callback) {
+            static::registerEvent($event, $callback);
+        }
+    }
+
+    /**
+     * 获取所有一次性事件
+     */
+    public static function getOnceEvents(): array
+    {
+        $class = static::class;
+        return array_keys(self::$onceEvents[$class] ?? []);
+    }
+
+    /**
+     * 获取所有队列事件
+     */
+    public static function getQueuedEvents(): array
+    {
+        $class = static::class;
+        return array_keys(self::$queuedEvents[$class] ?? []);
+    }
+
+    /**
+     * 清除一次性事件
+     */
+    public static function clearOnceEvents(?string $event = null): void
+    {
+        $class = static::class;
+        if ($event === null) {
+            unset(self::$onceEvents[$class]);
+        } else {
+            unset(self::$onceEvents[$class][$event]);
+        }
+    }
+
+    /**
+     * 清除队列事件
+     */
+    public static function clearQueuedEvents(?string $event = null): void
+    {
+        $class = static::class;
+        if ($event === null) {
+            unset(self::$queuedEvents[$class]);
+        } else {
+            unset(self::$queuedEvents[$class][$event]);
+        }
+    }
+
+    /**
+     * 清除事件优先级
+     */
+    public static function clearPriorities(?string $event = null): void
+    {
+        $class = static::class;
+        if ($event === null) {
+            unset(self::$eventPriorities[$class]);
+        } else {
+            unset(self::$eventPriorities[$class][$event]);
+        }
+    }
+
+    /**
      * 执行保存操作前
      */
     protected function beforeSave(): bool
@@ -195,7 +384,16 @@ trait ModelEvent
         }
 
         $result = $this->fireModelEvent('saving');
-        return $result !== false;
+        if ($result === false) {
+            return false;
+        }
+
+        $onceResult = $this->fireOnceEvent('saving');
+        if ($onceResult === false) {
+            return false;
+        }
+
+        return true;
     }
 
     /**
@@ -210,6 +408,8 @@ trait ModelEvent
         }
 
         $this->fireModelEvent('saved');
+        $this->fireQueuedEvent('saved');
+        $this->fireOnceEvent('saved');
     }
 
     /**
@@ -218,7 +418,16 @@ trait ModelEvent
     protected function beforeDelete(): bool
     {
         $result = $this->fireModelEvent('deleting');
-        return $result !== false;
+        if ($result === false) {
+            return false;
+        }
+
+        $onceResult = $this->fireOnceEvent('deleting');
+        if ($onceResult === false) {
+            return false;
+        }
+
+        return true;
     }
 
     /**
@@ -227,6 +436,8 @@ trait ModelEvent
     protected function afterDelete(): void
     {
         $this->fireModelEvent('deleted');
+        $this->fireQueuedEvent('deleted');
+        $this->fireOnceEvent('deleted');
     }
 
     /**
@@ -288,5 +499,18 @@ trait ModelEvent
     {
         $class = static::class;
         unset(self::$observers[$class]);
+    }
+
+    /**
+     * 清除所有事件相关数据
+     */
+    public static function clearAllEvents(): void
+    {
+        $class = static::class;
+        unset(self::$dispatcher[$class]);
+        unset(self::$observers[$class]);
+        unset(self::$onceEvents[$class]);
+        unset(self::$queuedEvents[$class]);
+        unset(self::$eventPriorities[$class]);
     }
 }
