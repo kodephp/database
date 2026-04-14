@@ -2053,4 +2053,155 @@ class QueryBuilder
 
         return true;
     }
+
+    /**
+     * 批量插入（多行 INSERT）
+     *
+     * @param array $values 二维数组，每行一个记录
+     * @return int 影响行数
+     */
+    public function insertBatch(array $values): int
+    {
+        if (empty($values)) {
+            return 0;
+        }
+
+        $firstRow = $values[0];
+        $columns = array_keys($firstRow);
+        $columnCount = count($columns);
+        $placeholders = '(' . implode(', ', array_fill(0, $columnCount, '?')) . ')';
+        $allPlaceholders = implode(', ', array_fill(0, count($values), $placeholders));
+
+        $sql = "INSERT INTO {$this->table} (" . implode(', ', $columns) . ") VALUES {$allPlaceholders}";
+
+        $bindings = [];
+        foreach ($values as $row) {
+            foreach ($columns as $column) {
+                $bindings[] = $row[$column] ?? null;
+            }
+        }
+
+        return $this->connection->statement($sql, $bindings);
+    }
+
+    /**
+     * 批量更新
+     *
+     * @param array $values 要更新的字段和值
+     * @param array $whereConditions WHERE 条件
+     * @return int 影响行数
+     */
+    public function updateBatch(array $values, array $whereConditions = []): int
+    {
+        if (empty($values)) {
+            return 0;
+        }
+
+        $sets = [];
+        $bindings = [];
+
+        foreach ($values as $column => $value) {
+            $sets[] = "{$column} = ?";
+            $bindings[] = $value;
+        }
+
+        $sql = "UPDATE {$this->table} SET " . implode(', ', $sets);
+
+        if (!empty($whereConditions)) {
+            $whereSql = $this->buildWhere();
+            $sql .= $whereSql;
+            foreach ($whereConditions as $value) {
+                $bindings[] = $value;
+            }
+        }
+
+        return $this->connection->statement($sql, $bindings);
+    }
+
+    /**
+     * UPSERT 批量（插入或更新多行）
+     *
+     * @param array $values 二维数组
+     * @param array $uniqueBy 唯一键
+     * @param array|null $updateFields 更新时更新的字段
+     * @return int 影响行数
+     */
+    public function upsertBatch(array $values, array $uniqueBy, ?array $updateFields = null): int
+    {
+        if (empty($values) || empty($uniqueBy)) {
+            return 0;
+        }
+
+        $firstRow = $values[0];
+        $columns = array_keys($firstRow);
+        $columnCount = count($columns);
+        $placeholders = '(' . implode(', ', array_fill(0, $columnCount, '?')) . ')';
+        $allPlaceholders = implode(', ', array_fill(0, count($values), $placeholders));
+
+        $sql = "INSERT INTO {$this->table} (" . implode(', ', $columns) . ") VALUES {$allPlaceholders}";
+
+        $bindings = [];
+        foreach ($values as $row) {
+            foreach ($columns as $column) {
+                $bindings[] = $row[$column] ?? null;
+            }
+        }
+
+        if ($updateFields === null) {
+            $updateFields = array_filter($columns, fn($col) => !in_array($col, $uniqueBy));
+        }
+
+        $sets = [];
+        foreach ($updateFields as $field) {
+            if (!in_array($field, $uniqueBy)) {
+                $sets[] = "{$field} = VALUES({$field})";
+            }
+        }
+
+        if (!empty($sets)) {
+            $sql .= " ON DUPLICATE KEY UPDATE " . implode(', ', $sets);
+        }
+
+        return $this->connection->statement($sql, $bindings);
+    }
+
+    /**
+     * 批量删除
+     *
+     * @param array $ids ID 数组
+     * @param string $column 字段名，默认 id
+     * @return int 影响行数
+     */
+    public function deleteBatch(array $ids, string $column = 'id'): int
+    {
+        if (empty($ids)) {
+            return 0;
+        }
+
+        $placeholders = implode(', ', array_fill(0, count($ids), '?'));
+        $sql = "DELETE FROM {$this->table} WHERE {$column} IN ({$placeholders})";
+
+        return $this->connection->statement($sql, $ids);
+    }
+
+    /**
+     * 分块处理并返回键值对
+     *
+     * @param string $key 键字段
+     * @param string $value 值字段
+     * @param int $chunkSize 每块大小
+     * @return array
+     */
+    public function pluckWithKeys(string $key, string $value, int $chunkSize = 1000): array
+    {
+        $result = [];
+
+        $this->chunk(function ($records) use ($key, $value, &$result) {
+            foreach ($records as $record) {
+                $result[$record[$key]] = $record[$value];
+            }
+        }, $chunkSize);
+
+        return $result;
+    }
 }

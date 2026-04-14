@@ -674,9 +674,22 @@ Db::table('users')->insertAll([
     ['name' => 'a', 'email' => 'a@example.com'],
     ['name' => 'b', 'email' => 'b@example.com']
 ]);
+Db::table('users')->insertBatch([
+    ['name' => 'a', 'email' => 'a@example.com'],
+    ['name' => 'b', 'email' => 'b@example.com'],
+    ['name' => 'c', 'email' => 'c@example.com'],
+]); // 批量插入（多行 INSERT）
 
 // 更新
 Db::table('users')->where('id', '=', 1)->update(['name' => 'newname']);
+Db::table('users')->updateBatch(['name' => 'newname'], ['id' => 1]); // 批量更新
+
+// UPSERT（插入或更新）
+Db::table('users')->upsert(['id' => 1, 'name' => 'newname'], ['id']); // 单条
+Db::table('users')->upsertBatch([
+    ['id' => 1, 'name' => 'a'],
+    ['id' => 2, 'name' => 'b'],
+], ['id']); // 批量 UPSERT
 
 // 自增自减
 Db::table('users')->where('id', '=', 1)->inc('views');
@@ -685,9 +698,13 @@ Db::table('users')->where('id', '=', 1)->dec('balance', 100);
 
 // 删除
 Db::table('users')->where('id', '=', 1)->delete();
+Db::table('users')->deleteBatch([1, 2, 3]); // 批量删除
 
-// 批量删除
-Db::table('users')->whereIn('id', [1, 2, 3])->delete();
+// 查找或创建
+Db::table('users')->firstOrCreate(['email' => 'test@example.com'], ['name' => 'test']);
+
+// 更新或创建
+Db::table('users')->updateOrCreate(['email' => 'test@example.com'], ['name' => 'test']);
 ```
 
 ### 批量操作
