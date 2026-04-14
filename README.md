@@ -622,13 +622,47 @@ $conn = Db::connection('default');
 $conn->isConnected();           // 检查连接是否正常
 $conn->ping();                 // Ping 数据库检查连接
 $conn->reconnect();            // 重新连接
-$conn->getVersion();           // 获取数据库版本
-$conn->getCurrentDatabase();    // 获取当前数据库名
+$conn->getVersion();           // 获取数据库版本（驱动自适应）
+$conn->getCurrentDatabase();   // 获取当前数据库名（驱动自适应）
 $conn->getTables();            // 获取所有表名
-$conn->tableExists('users');   // 检查表是否存在
-$conn->getTableColumns('users'); // 获取表的所有字段
+$conn->tableExists('users');   // 检查表是否存在（驱动自适应）
+$conn->getTableColumns('users'); // 获取表的所有字段（驱动自适应）
 $conn->getPrimaryKey('users');  // 获取表的主键字段
 $conn->getIndexes('users');     // 获取表的索引信息
+$conn->getLastInsertId();       // 获取最后插入 ID（驱动自适应）
+$conn->buildPaginationSql($sql, 10, 0); // 构建分页 SQL（驱动自适应）
+```
+
+### 多数据库驱动支持
+
+```php
+// 支持的驱动类型：mysql, pgsql, sqlite, sqlsrv, oracle
+
+// 获取当前驱动类型
+$conn = Db::connection('default');
+$driver = $conn->getDriver();  // 'mysql'
+
+// 检查是否为指定驱动
+$conn->isDriver('mysql');     // true
+$conn->isDriver('pgsql');     // false
+
+// 检查是否支持驱动
+Connection::isSupportedDriver('mysql');  // true
+Connection::isSupportedDriver('pgsql'); // true
+Connection::isSupportedDriver('sqlite'); // true
+
+// 获取驱动特定方法
+$conn->getDriverMethod('lastInsertId'); // 'LAST_INSERT_ID()' (MySQL)
+$conn->getDriverMethod('now');          // 'NOW()' (MySQL)
+
+// 驱动特定 SQL 差异自动处理
+// - MySQL: LIMIT x OFFSET y
+// - PostgreSQL: LIMIT x OFFSET y (支持 RETURNING)
+// - SQLite: LIMIT x OFFSET y
+// - SQL Server: OFFSET x ROWS FETCH NEXT y ROWS ONLY
+
+// PostgreSQL RETURNING 子句支持
+// $conn->getDriverMethod('returning'); // 'RETURNING'
 ```
 
 ### 增删改

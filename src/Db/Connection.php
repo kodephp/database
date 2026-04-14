@@ -10,7 +10,7 @@ use Kode\Database\Query\QueryBuilder;
 /**
  * 数据库连接封装类
  * 用于指定连接进行数据库操作
- * 支持跨库查询、多数据库连接
+ * 支持跨库查询、多数据库连接、PostgreSQL、SQLite
  */
 class Connection
 {
@@ -23,6 +23,56 @@ class Connection
     /** @var QueryBuilder|null 当前查询构建器（用于跨库Join） */
     protected ?QueryBuilder $queryBuilder = null;
 
+    /** @var string 数据库驱动类型 */
+    protected string $driver = 'mysql';
+
+    /** @var array 支持的驱动类型 */
+    public const SUPPORTED_DRIVERS = ['mysql', 'pgsql', 'sqlite', 'sqlsrv', 'oracle'];
+
+    /** @var array 驱动特定方法映射 */
+    public const DRIVER_SPECIFIC_METHODS = [
+        'pgsql' => [
+            'lastInsertId' => 'lastval',
+            'limit' => 'LIMIT',
+            'offset' => 'OFFSET',
+            'now' => 'NOW()',
+            'random' => 'RANDOM()',
+            'returning' => 'RETURNING',
+        ],
+        'sqlite' => [
+            'lastInsertId' => 'last_insert_rowid',
+            'limit' => 'LIMIT',
+            'offset' => 'OFFSET',
+            'now' => "datetime('now')",
+            'random' => 'RANDOM()',
+            'returning' => null,
+        ],
+        'mysql' => [
+            'lastInsertId' => 'LAST_INSERT_ID()',
+            'limit' => 'LIMIT',
+            'offset' => 'OFFSET',
+            'now' => 'NOW()',
+            'random' => 'RAND()',
+            'returning' => null,
+        ],
+        'sqlsrv' => [
+            'lastInsertId' => 'SCOPE_IDENTITY()',
+            'limit' => 'TOP',
+            'offset' => 'OFFSET',
+            'now' => 'GETDATE()',
+            'random' => 'NEWID()',
+            'returning' => 'OUTPUT',
+        ],
+        'oracle' => [
+            'lastInsertId' => 'ROWID',
+            'limit' => 'ROWNUM',
+            'offset' => 'OFFSET',
+            'now' => 'SYSDATE',
+            'random' => 'DBMS_RANDOM.VALUE',
+            'returning' => 'RETURNING',
+        ],
+    ];
+
     /**
      * 构造函数
      *
@@ -33,6 +83,260 @@ class Connection
     {
         $this->name = $name;
         $this->database = $database;
+        $this->detectDriver();
+    }
+
+    /**
+     * 检测数据库驱动类型
+     */
+    protected function detectDriver(): void
+    {
+        $config = Db::getConfig($this->name);
+        if (isset($config['driver'])) {
+            $this->driver = strtolower($config['driver']);
+        }
+    }
+
+    /**
+     * 获取当前驱动类型
+     */
+    public function getDriver(): string
+    {
+        return $this->driver;
+    }
+
+    /**
+     * 检查是否为指定驱动
+     */
+    public function isDriver(string $driver): bool
+    {
+        return $this->driver === strtolower($driver);
+    }
+
+    /**
+     * 检查是否支持指定驱动
+     */
+    public static function isSupportedDriver(string $driver): bool
+    {
+        return in_array(strtolower($driver), self::SUPPORTED_DRIVERS, true);
+    }
+
+    /**
+     * 获取驱动特定方法
+     */
+    public function getDriverMethod(string $method): ?string
+    {
+        return self::DRIVER_SPECIFIC_METHODS[$this->driver][$method] ?? null;
+    }
+
+    /**
+     * 获取所有驱动特定方法
+     */
+    public function getDriverMethods(): array
+    {
+        return self::DRIVER_SPECIFIC_METHODS[$this->driver] ?? [];
+    }
+
+    /**
+     * 构建分页 SQL（驱动自适应）
+     */
+    public function buildPaginationSql(string $sql, ?int $limit = null, ?int $offset = null): string
+    {
+        if ($limit === null) {
+            return $sql;
+        }
+
+        return match ($this->driver) {
+            'pgsql', 'sqlite' => $this->buildOffsetPagination($sql, $limit, $offset),
+            'sqlsrv' => $this->buildSqlsrvPagination($sql, $limit, $offset),
+            default => $this->buildMysqlPagination($sql, $limit, $offset),
+        };
+    }
+
+    /**
+     * MySQL 分页
+     */
+    protected function buildMysqlPagination(string $sql, int $limit, ?int $offset): string
+    {
+        $sql .= " LIMIT {$limit}";
+        if ($offset !== null) {
+            $sql .= " OFFSET {$offset}";
+        }
+        return $sql;
+    }
+
+    /**
+     * PostgreSQL/SQLite 分页
+     */
+    protected function buildOffsetPagination(string $sql, int $limit, ?int $offset): string
+    {
+        $sql .= " LIMIT {$limit}";
+        if ($offset !== null) {
+            $sql .= " OFFSET {$offset}";
+        }
+        return $sql;
+    }
+
+    /**
+     * SQL Server 分页
+     */
+    protected function buildSqlsrvPagination(string $sql, int $limit, ?int $offset): string
+    {
+        $orderBy = '';
+        if (preg_match('/ORDER\s+BY\s+([\w,\s\.]+)/i', $sql, $matches)) {
+            $orderBy = $matches[0];
+            $sql = preg_replace('/ORDER\s+BY\s+[\w,\s\.]+/i', '', $sql);
+        }
+
+        $offset = $offset ?? 0;
+        $sql = "SELECT * FROM ({$sql}) AS t ORDER BY {$orderBy}";
+        $sql .= " OFFSET {$offset} ROWS FETCH NEXT {$limit} ROWS ONLY";
+        return $sql;
+    }
+
+    /**
+     * 获取最后插入 ID（驱动自适应）
+     */
+    public function getLastInsertId(?string $sequence = null): string
+    {
+        return match ($this->driver) {
+            'pgsql' => $this->select("SELECT lastval()")[0]['lastval'] ?? '0',
+            'sqlite' => $this->select("SELECT last_insert_rowid() as id")[0]['id'] ?? '0',
+            'sqlsrv' => $this->select("SELECT SCOPE_IDENTITY() as id")[0]['id'] ?? '0',
+            default => $this->select("SELECT LAST_INSERT_ID() as id")[0]['id'] ?? '0',
+        };
+    }
+
+    /**
+     * 检查表是否存在（驱动自适应）
+     */
+    public function tableExists(string $table): bool
+    {
+        return match ($this->driver) {
+            'pgsql' => $this->tableExistsPgsql($table),
+            'sqlite' => $this->tableExistsSqlite($table),
+            'sqlsrv' => $this->tableExistsSqlsrv($table),
+            default => $this->tableExistsMysql($table),
+        };
+    }
+
+    /**
+     * MySQL 表存在检查
+     */
+    protected function tableExistsMysql(string $table): bool
+    {
+        $sql = "SHOW TABLES LIKE ?";
+        $result = $this->select($sql, [$table]);
+        return !empty($result);
+    }
+
+    /**
+     * PostgreSQL 表存在检查
+     */
+    protected function tableExistsPgsql(string $table): bool
+    {
+        $sql = "SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = ?) AS exists";
+        $result = $this->select($sql, [$table]);
+        return ($result[0]['exists'] ?? false) === true || $result[0]['exists'] === 't';
+    }
+
+    /**
+     * SQLite 表存在检查
+     */
+    protected function tableExistsSqlite(string $table): bool
+    {
+        $sql = "SELECT name FROM sqlite_master WHERE type='table' AND name = ?";
+        $result = $this->select($sql, [$table]);
+        return !empty($result);
+    }
+
+    /**
+     * SQL Server 表存在检查
+     */
+    protected function tableExistsSqlsrv(string $table): bool
+    {
+        $sql = "SELECT * FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = ?";
+        $result = $this->select($sql, [$table]);
+        return !empty($result);
+    }
+
+    /**
+     * 获取表字段列表（驱动自适应）
+     */
+    public function getTableColumns(string $table): array
+    {
+        return match ($this->driver) {
+            'pgsql' => $this->getTableColumnsPgsql($table),
+            'sqlite' => $this->getTableColumnsSqlite($table),
+            'sqlsrv' => $this->getTableColumnsSqlsrv($table),
+            default => $this->getTableColumnsMysql($table),
+        };
+    }
+
+    /**
+     * MySQL 表字段
+     */
+    protected function getTableColumnsMysql(string $table): array
+    {
+        $sql = "SHOW COLUMNS FROM {$table}";
+        $result = $this->select($sql);
+        return array_column($result, 'Field');
+    }
+
+    /**
+     * PostgreSQL 表字段
+     */
+    protected function getTableColumnsPgsql(string $table): array
+    {
+        $sql = "SELECT column_name FROM information_schema.columns WHERE table_name = ? ORDER BY ordinal_position";
+        $result = $this->select($sql, [$table]);
+        return array_column($result, 'column_name');
+    }
+
+    /**
+     * SQLite 表字段
+     */
+    protected function getTableColumnsSqlite(string $table): array
+    {
+        $sql = "PRAGMA table_info({$table})";
+        $result = $this->select($sql);
+        return array_column($result, 'name');
+    }
+
+    /**
+     * SQL Server 表字段
+     */
+    protected function getTableColumnsSqlsrv(string $table): array
+    {
+        $sql = "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = ? ORDER BY ORDINAL_POSITION";
+        $result = $this->select($sql, [$table]);
+        return array_column($result, 'COLUMN_NAME');
+    }
+
+    /**
+     * 获取当前数据库名
+     */
+    public function getCurrentDatabase(): ?string
+    {
+        return match ($this->driver) {
+            'pgsql' => $this->select('SELECT current_database() as db')[0]['db'] ?? null,
+            'sqlite' => $this->database,
+            'sqlsrv' => $this->select('SELECT DB_NAME() as db')[0]['db'] ?? null,
+            default => $this->select('SELECT DATABASE() as db')[0]['db'] ?? null,
+        };
+    }
+
+    /**
+     * 获取服务器版本
+     */
+    public function getVersion(): string
+    {
+        return match ($this->driver) {
+            'pgsql' => $this->select('SELECT version()')[0]['version'] ?? '',
+            'sqlite' => 'SQLite ' . ($this->select('SELECT sqlite_version() as v')[0]['v'] ?? ''),
+            'sqlsrv' => $this->select('SELECT @@VERSION as v')[0]['v'] ?? '',
+            default => $this->select('SELECT VERSION() as version')[0]['version'] ?? '',
+        };
     }
 
     /**
@@ -471,29 +775,6 @@ class Connection
     }
 
     /**
-     * 检查表是否存在
-     *
-     * @param string $table 表名
-     * @return bool
-     */
-    public function tableExists(string $table): bool
-    {
-        return in_array($table, $this->getTables(), true);
-    }
-
-    /**
-     * 获取表的所有字段
-     *
-     * @param string $table 表名
-     * @return array
-     */
-    public function getTableColumns(string $table): array
-    {
-        $result = $this->select("SHOW COLUMNS FROM {$table}");
-        return array_column($result, 'Field');
-    }
-
-    /**
      * 获取表的主键字段
      *
      * @param string $table 表名
@@ -514,49 +795,5 @@ class Connection
     public function getIndexes(string $table): array
     {
         return $this->select("SHOW INDEX FROM {$table}");
-    }
-
-    /**
-     * 获取数据库版本
-     *
-     * @return string
-     */
-    public function getVersion(): string
-    {
-        $result = $this->select('SELECT VERSION() as version');
-        return $result[0]['version'] ?? '';
-    }
-
-    /**
-     * 获取当前数据库名
-     *
-     * @return string|null
-     */
-    public function getCurrentDatabase(): ?string
-    {
-        $result = $this->select('SELECT DATABASE() as db');
-        return $result[0]['db'] ?? null;
-    }
-
-    /**
-     * 重新连接
-     *
-     * @return bool
-     */
-    public function reconnect(): bool
-    {
-        try {
-            $config = Db::getConfig($this->name);
-            $factory = new \Kode\Database\Connection\ConnectionFactory();
-            $connection = $factory->make($config);
-
-            if ($this->database !== null) {
-                $connection->setDatabase($this->database);
-            }
-
-            return true;
-        } catch (\Throwable) {
-            return false;
-        }
     }
 }
