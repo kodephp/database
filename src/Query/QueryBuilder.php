@@ -2055,36 +2055,6 @@ class QueryBuilder
     }
 
     /**
-     * 批量插入（多行 INSERT）
-     *
-     * @param array $values 二维数组，每行一个记录
-     * @return int 影响行数
-     */
-    public function insertBatch(array $values): int
-    {
-        if (empty($values)) {
-            return 0;
-        }
-
-        $firstRow = $values[0];
-        $columns = array_keys($firstRow);
-        $columnCount = count($columns);
-        $placeholders = '(' . implode(', ', array_fill(0, $columnCount, '?')) . ')';
-        $allPlaceholders = implode(', ', array_fill(0, count($values), $placeholders));
-
-        $sql = "INSERT INTO {$this->table} (" . implode(', ', $columns) . ") VALUES {$allPlaceholders}";
-
-        $bindings = [];
-        foreach ($values as $row) {
-            foreach ($columns as $column) {
-                $bindings[] = $row[$column] ?? null;
-            }
-        }
-
-        return $this->connection->statement($sql, $bindings);
-    }
-
-    /**
      * 批量更新
      *
      * @param array $values 要更新的字段和值
@@ -2107,12 +2077,8 @@ class QueryBuilder
 
         $sql = "UPDATE {$this->table} SET " . implode(', ', $sets);
 
-        if (!empty($whereConditions)) {
-            $whereSql = $this->buildWhere();
-            $sql .= $whereSql;
-            foreach ($whereConditions as $value) {
-                $bindings[] = $value;
-            }
+        if (!empty($this->wheres)) {
+            $sql .= ' WHERE ' . implode(' AND ', $this->wheres);
         }
 
         return $this->connection->statement($sql, $bindings);

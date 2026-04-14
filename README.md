@@ -672,17 +672,13 @@ $conn->getDriverMethod('now');          // 'NOW()' (MySQL)
 Db::table('users')->insert(['name' => 'test', 'email' => 'test@example.com']);
 Db::table('users')->insertAll([
     ['name' => 'a', 'email' => 'a@example.com'],
-    ['name' => 'b', 'email' => 'b@example.com']
-]);
-Db::table('users')->insertBatch([
-    ['name' => 'a', 'email' => 'a@example.com'],
     ['name' => 'b', 'email' => 'b@example.com'],
     ['name' => 'c', 'email' => 'c@example.com'],
-]); // 批量插入（多行 INSERT）
+]); // 批量插入
 
 // 更新
 Db::table('users')->where('id', '=', 1)->update(['name' => 'newname']);
-Db::table('users')->updateBatch(['name' => 'newname'], ['id' => 1]); // 批量更新
+Db::table('users')->updateBatch(['name' => 'newname']); // 批量更新
 
 // UPSERT（插入或更新）
 Db::table('users')->upsert(['id' => 1, 'name' => 'newname'], ['id']); // 单条
