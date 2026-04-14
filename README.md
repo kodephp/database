@@ -1627,22 +1627,130 @@ EventManager::getInstance()->listen(TransactionRollbackEvent::class, function ($
 ```php
 use Kode\Database\Pool\PoolManager;
 
+// 初始化连接池（默认类型）
 PoolManager::init($config, 'default');
-$stats = PoolManager::getPool()->getStats();
 
-PoolManager::getPool()->cleanup();
-PoolManager::getPool()->reset();
+// 初始化不同类型的连接池
+PoolManager::init($config, 'default', 'connection');  // 普通连接池
+PoolManager::init($config, 'default', 'process');    // 进程池
+PoolManager::init($config, 'default', 'parallel');  // 并行池
+PoolManager::init($config, 'default', 'fiber');      // 协程池
 
-// 清除指定连接池
-Db::clearPool('slave');
+// 获取连接池
+$pool = PoolManager::getPool();
 
-// 获取连接池状态
-$stats = [
-    'max' => 10,
-    'min' => 2,
-    'active' => 5,
-    'idle' => 5,
+// 获取连接统计
+$stats = $pool->getStats();
+print_r($stats);
+// 输出: ['type' => 'connection', 'total' => 10, 'available' => 5, 'in_use' => 5, ...]
+
+// 获取连接池类型
+$type = PoolManager::getPoolType();  // 返回: connection|process|parallel|fiber
+
+// 检查是否支持指定池类型
+$supports = PoolManager::supports('fiber');  // true
+
+// 执行并行查询
+$results = PoolManager::parallelExecute([
+    ['sql' => 'SELECT * FROM users WHERE id = ?', 'bindings' => [1]],
+    ['sql' => 'SELECT * FROM posts WHERE user_id = ?', 'bindings' => [1]],
+    ['sql' => 'SELECT * FROM comments WHERE post_id = ?', 'bindings' => [1]],
+]);
+
+// 批量执行任务
+$results = PoolManager::batchExecute([
+    fn() => Db::table('users')->find(1),
+    fn() => Db::table('posts')->find(1),
+    fn() => Db::table('comments')->find(1),
+], 3);  // 最大并发数
+
+// 清理过期连接
+$pool->cleanup();
+
+// 重置连接池
+$pool->reset();
+
+// 清除所有连接池
+PoolManager::clear();
+```
+
+### 连接池类型说明
+
+| 类型 | 说明 | 适用场景 |
+|------|------|---------|
+| `connection` | 普通连接池 | CLI、FastCGI、普通 Web 应用 |
+| `process` | 进程池 | 多进程环境（pcntl_fork） |
+| `parallel` | 并行池 | 多连接并行查询 |
+| `fiber` | 协程池 | Swoole/Fiber 协程环境 |
+
+### 进程池 (ProcessPool)
+
+```php
+use Kode\Database\Pool\ProcessPool;
+
+$pool = new ProcessPool($config, 'default');
+
+// 进程安全获取连接
+$pid = getmypid();
+$connection = $pool->get();  // fork 后自动重建
+
+// 归还连接
+$pool->release($connection);
+
+// 获取统计
+$stats = $pool->getStats();
+// ['type' => 'process', 'total' => 10, 'available' => 5, 'process_id' => 1234]
+```
+
+### 并行池 (ParallelPool)
+
+```php
+use Kode\Database\Pool\ParallelPool;
+
+$pool = new ParallelPool($config, 'default');
+
+// 并行执行多个查询
+$results = $pool->parallelExecute([
+    ['sql' => 'SELECT * FROM users LIMIT 10', 'bindings' => []],
+    ['sql' => 'SELECT * FROM posts LIMIT 10', 'bindings' => []],
+    ['sql' => 'SELECT * FROM comments LIMIT 10', 'bindings' => []],
+], function($sql, $bindings, $connection) {
+    return $connection->select($sql, $bindings);
+});
+
+// 批量执行任务
+$tasks = [
+    fn() => Db::table('users')->count(),
+    fn() => Db::table('posts')->count(),
+    fn() => Db::table('comments')->count(),
 ];
+$results = $pool->batchExecute($tasks, 5);  // 最大并发 5
+```
+
+### 协程池 (FiberPool)
+
+```php
+use Kode\Database\Pool\FiberPool;
+
+$pool = new FiberPool($config, 'default');
+
+// 设置使用 Swoole Channel（需要 Swoole 扩展）
+$pool->setUseSwooleChannel(true);
+
+// 在协程中获取连接
+$fiber = new Fiber(function () {
+    $connection = $pool->get();  // 协程隔离
+    // 使用连接...
+    $pool->release($connection);
+});
+$fiber->start();
+
+// 获取当前协程的连接
+$fiberConn = $pool->getFiberConnection();
+
+// 获取统计
+$stats = $pool->getStats();
+// ['type' => 'fiber', 'total' => 20, 'available' => 10, 'fiber_connections' => 5, 'swoole_channel' => true]
 ```
 
 ---

@@ -28,4 +28,14 @@ interface PoolInterface
      * 获取配置
      */
     public function getConfig(): array;
+
+    /**
+     * 获取连接统计
+     */
+    public function getStats(): array;
+
+    /**
+     * 关闭连接池
+     */
+    public function close(): void;
 }
