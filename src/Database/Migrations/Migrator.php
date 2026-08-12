@@ -37,6 +37,8 @@ class Migrator
 
     /**
      * 确保 migrations 表存在
+     *
+     * 根据数据库方言生成对应的建表语句，使迁移系统在 MySQL / PostgreSQL / SQLite / SQL Server 上均可运行。
      */
     public function ensureMigrationsTable(): void
     {
@@ -44,14 +46,44 @@ class Migrator
             return;
         }
 
-        Db::statement(
-            "CREATE TABLE IF NOT EXISTS {$this->table} (
+        $driver = Db::getDriver($this->connection);
+
+        $ddl = match ($driver) {
+            'pgsql' => "CREATE TABLE IF NOT EXISTS {$this->table} (
+                id SERIAL PRIMARY KEY,
+                migration VARCHAR(255) NOT NULL,
+                batch INT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )",
+            'sqlite' => "CREATE TABLE IF NOT EXISTS {$this->table} (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                migration VARCHAR(255) NOT NULL,
+                batch INT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )",
+            'sqlsrv' => "CREATE TABLE IF NOT EXISTS {$this->table} (
+                id INT IDENTITY(1,1) PRIMARY KEY,
+                migration VARCHAR(255) NOT NULL,
+                batch INT NOT NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )",
+            default => "CREATE TABLE IF NOT EXISTS {$this->table} (
                 id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
                 migration VARCHAR(255) NOT NULL,
                 batch INT NOT NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"
-        );
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci",
+        };
+
+        Db::statement($ddl);
+    }
+
+    /**
+     * 让 Schema 生成与当前连接方言一致的 DDL（迁移文件无需逐个指定 driver）
+     */
+    protected function applySchemaDriver(): void
+    {
+        \Kode\Database\Schema\Schema::setDefaultDriver(Db::getDriver($this->connection));
     }
 
     /**
@@ -143,6 +175,7 @@ class Migrator
      */
     public function run(?int $steps = null): array
     {
+        $this->applySchemaDriver();
         $this->ensureMigrationsTable();
 
         $pending = $this->getPendingFiles();
@@ -186,6 +219,8 @@ class Migrator
      */
     public function rollback(int $steps = 1): array
     {
+        $this->applySchemaDriver();
+
         if (!Db::tableExists($this->table)) {
             return [];
         }

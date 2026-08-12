@@ -6,12 +6,17 @@ namespace Kode\Database\Schema;
 
 /**
  * 字段定义
+ *
+ * 类型与自增语法随数据库方言（driver）变化，故 Column 需感知 driver 以生成正确的 DDL。
  */
 class Column
 {
     protected string $name;
     protected string $type;
     protected array $options = [];
+
+    /** @var string 数据库方言：mysql / pgsql / sqlite / sqlsrv / oracle */
+    protected string $driver = 'mysql';
 
     public function __construct(string $name, string $type, array $options = [])
     {
@@ -20,11 +25,18 @@ class Column
         $this->options = $options;
     }
 
+    public function setDriver(string $driver): static
+    {
+        $this->driver = strtolower($driver);
+        return $this;
+    }
+
     public function toSql(): string
     {
         $sql = "{$this->name} {$this->buildType()}";
 
-        if ($this->options['unsigned'] ?? false) {
+        // UNSIGNED 仅在 MySQL 语义下有效
+        if (($this->options['unsigned'] ?? false) && $this->driver === 'mysql') {
             $sql .= ' UNSIGNED';
         }
 
@@ -32,8 +44,16 @@ class Column
             $sql .= ' NOT NULL';
         }
 
+        // 自增语法：MySQL 用 AUTO_INCREMENT；SQLite 用 AUTOINCREMENT；
+        // SQL Server 用 IDENTITY(1,1)；PostgreSQL 在 buildType() 中已转为 SERIAL/BIGSERIAL。
         if ($this->options['auto_increment'] ?? false) {
-            $sql .= ' AUTO_INCREMENT';
+            if ($this->driver === 'mysql') {
+                $sql .= ' AUTO_INCREMENT';
+            } elseif ($this->driver === 'sqlite') {
+                $sql .= ' AUTOINCREMENT';
+            } elseif ($this->driver === 'sqlsrv') {
+                $sql .= ' IDENTITY(1,1)';
+            }
         }
 
         if ($this->options['primary_key'] ?? false) {
@@ -51,8 +71,11 @@ class Column
             }
         }
 
+        // 列注释：SQLite / PostgreSQL 不支持内联列 COMMENT
         if ($this->options['comment'] ?? false) {
-            $sql .= " COMMENT '{$this->options['comment']}'";
+            if (in_array($this->driver, ['mysql', 'sqlsrv', 'oracle'], true)) {
+                $sql .= " COMMENT '{$this->options['comment']}'";
+            }
         }
 
         return $sql;
@@ -60,7 +83,12 @@ class Column
 
     protected function buildType(): string
     {
-        return match ($this->type) {
+        // 自增在 PostgreSQL 下通过类型转为 SERIAL / BIGSERIAL
+        if (($this->options['auto_increment'] ?? false) && $this->driver === 'pgsql') {
+            return $this->type === 'bigint' ? 'BIGSERIAL' : 'SERIAL';
+        }
+
+        $type = match ($this->type) {
             'bigint' => 'bigint',
             'int', 'integer' => 'int',
             'smallint' => 'smallint',
@@ -79,11 +107,24 @@ class Column
             'timestamp' => 'timestamp',
             'time' => 'time',
             'year' => 'year',
-            'boolean' => 'tinyint(1)',
-            'json' => 'json',
             'blob' => 'blob',
+            'json' => $this->driver === 'postgres' || $this->driver === 'pgsql' ? 'jsonb' : 'json',
+            'boolean' => match ($this->driver) {
+                'pgsql' => 'boolean',
+                'sqlite' => 'integer',
+                'sqlsrv' => 'bit',
+                'oracle' => 'number(1)',
+                default => 'tinyint(1)',
+            },
             default => $this->type,
         };
+
+        // SQLite 不支持 mediumtext / longtext 等，统一降级为 text
+        if ($this->driver === 'sqlite' && in_array($type, ['mediumtext', 'longtext', 'mediumint'], true)) {
+            return 'text';
+        }
+
+        return $type;
     }
 
     /**

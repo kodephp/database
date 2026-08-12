@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Kode\Database\Db;
 
+use Kode\Database\Config\Driver;
 use Kode\Database\Pool\PoolManager;
 use Kode\Database\Query\QueryBuilder;
 
@@ -25,6 +26,9 @@ class Connection
 
     /** @var string 数据库驱动类型 */
     protected string $driver = 'mysql';
+
+    /** @var mixed|null 跨库场景复用的底层连接（避免每次查询新建连接） */
+    protected mixed $connection = null;
 
     /** @var array<int, string> 支持的驱动类型 */
     public const array SUPPORTED_DRIVERS = ['mysql', 'pgsql', 'sqlite', 'sqlsrv', 'oracle'];
@@ -88,13 +92,14 @@ class Connection
 
     /**
      * 检测数据库驱动类型
+     *
+     * 注意：driver 配置可能表示 ORM 连接器（laravel/pdo）或数据库类型（mysql/pgsql/...），
+     * 这里必须解析为真正的数据库类型，否则 getLastInsertId / tableExists 等方言方法会误用 MySQL 语法。
      */
     protected function detectDriver(): void
     {
         $config = Db::getConfig($this->name);
-        if (isset($config['driver'])) {
-            $this->driver = strtolower($config['driver']);
-        }
+        $this->driver = Driver::dbTypeFromConfig($config)->value;
     }
 
     /**
@@ -423,6 +428,7 @@ class Connection
     {
         $connection = $this->getConnection();
         $connection->beginTransaction();
+        Db::enterTransaction();
     }
 
     /**
@@ -432,6 +438,7 @@ class Connection
     {
         $connection = $this->getConnection();
         $connection->commit();
+        Db::leaveTransaction();
     }
 
     /**
@@ -441,6 +448,7 @@ class Connection
     {
         $connection = $this->getConnection();
         $connection->rollBack();
+        Db::leaveTransaction();
     }
 
     /**
@@ -471,6 +479,10 @@ class Connection
 
         // 跨库场景（useDatabase 指定了 database）需独立连接，避免污染共享连接的库名
         if ($this->database !== null) {
+            if ($this->connection !== null) {
+                return $this->connection;
+            }
+
             if (!empty($config['pool'])) {
                 $connection = PoolManager::getConnection($this->name);
             } else {
@@ -479,6 +491,7 @@ class Connection
             }
 
             $connection->setDatabase($this->database);
+            $this->connection = $connection;
 
             return $connection;
         }

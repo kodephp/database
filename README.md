@@ -111,14 +111,45 @@ composer require hyperf/database          # Hyperf ORM
 # 不装任何 ORM 也能跑，自动使用内置 PDO 执行器
 ```
 
+### 配置字段语义（关键）
+
+连接配置中有两个容易混淆的维度，本包已统一解析，可混用：
+
+| 字段 | 含义 | 取值 |
+| --- | --- | --- |
+| `driver` | **优先作为「数据库类型 / 方言」** | `mysql` / `pgsql` / `sqlite` / `sqlsrv` / `oracle`（也兼容旧写法：`laravel`/`thinkphp`/`symfony`/`hyperf`/`pdo` 时会被视为「连接器选择器」） |
+| `connector` | 显式指定 ORM 执行器（可选，优先级最高） | `laravel` / `thinkphp` / `symfony` / `hyperf` / `pdo` |
+| `database_driver` | 当 `driver` 被当作连接器时，显式声明数据库类型（可选） | `mysql` / `pgsql` / `sqlite` / `sqlsrv` / `oracle` |
+
+- 未安装任何 ORM 且未指定 `connector` 时，自动探测已安装的 ORM，否则回退内置 `pdo` 执行器。
+- 内置 `pdo` 执行器支持 **MySQL / PostgreSQL / SQLite / SQL Server / Oracle** 全部数据库（DSN 与 DDL 均随 `driver` 自适应）。
+
 ```php
 use Kode\Database\Db\Db;
 
-// driver 决定连接器的桥接目标；未安装对应 ORM 时自动回退到 PDO
+// 方式一：直接写数据库类型（最常用，自动用内置 PDO 执行器）
 Db::setConfig([
-    'driver'   => 'laravel',   // laravel | thinkphp | symfony | hyperf | pdo
+    'driver'   => 'pgsql',      // 数据库类型：pgsql / sqlite / sqlsrv / oracle 同样支持
     'host'     => '127.0.0.1',
-    'port'     => 3306,
+    'database' => 'app',
+    'username' => 'root',
+    'password' => '',
+]);
+
+// 方式二：显式选 ORM 执行器 + 数据库类型
+Db::setConfig([
+    'connector'       => 'laravel',  // laravel | thinkphp | symfony | hyperf | pdo
+    'database_driver' => 'mysql',
+    'host'     => '127.0.0.1',
+    'database' => 'app',
+    'username' => 'root',
+    'password' => '',
+]);
+
+// 方式三：旧写法兼容（driver 作为连接器名）
+Db::setConfig([
+    'driver'   => 'laravel',   // 视为连接器；数据库类型回退 mysql（可用 database_driver 覆盖）
+    'host'     => '127.0.0.1',
     'database' => 'app',
     'username' => 'root',
     'password' => '',
@@ -128,7 +159,7 @@ Db::setConfig([
 $users = Db::table('users')->where('status', 1)->orderBy('id', 'desc')->paginate(1, 15);
 ```
 
-> 切换 ORM 只需改 `driver` 一个字段，业务代码（模型、QueryBuilder）零改动。
+> 切换 ORM 只需改 `connector` 一个字段，业务代码（模型、QueryBuilder）零改动。
 
 ## 与 Webman 融合
 
@@ -229,6 +260,34 @@ $migrator->reset();
 
 > 迁移文件名建议以时间戳前缀命名（如 `2024_01_01_000000_xxx.php`），运行器会按文件名升序执行。
 
+### 跨数据库（方言自适应）
+
+`Schema` 与 `Migrator` 均感知数据库方言，会自动生成对应数据库的 DDL：
+
+- **MySQL**：`AUTO_INCREMENT` + `ENGINE` / `CHARSET` / `COLLATE`
+- **PostgreSQL**：`BIGSERIAL` / `SERIAL` 自增，无 `ENGINE`
+- **SQLite**：`INTEGER PRIMARY KEY AUTOINCREMENT`
+- **SQL Server**：`IDENTITY(1,1)`
+- **Oracle**：`OCI` 驱动
+
+运行迁移前，`Migrator` 会根据实际连接自动把对应方言设为 `Schema` 默认方言，迁移文件无需改动。
+若需手动指定：
+
+```php
+use Kode\Database\Schema\Schema;
+
+// 手动设置全局默认方言（之后 Schema::create 均按此生成）
+Schema::setDefaultDriver('pgsql');
+
+Schema::create('users', function (Schema $t) {
+    $t->id();                       // pgsql -> id BIGSERIAL PRIMARY KEY
+    $t->string('email', 191)->unique();
+});
+```
+
+> 类型也随方言调整（如 `boolean` 在 pgsql 为 `boolean`、sqlite 为 `integer`、sqlsrv 为 `bit`），
+> 因此同一份迁移脚本可在不同数据库上执行。
+
 ---
 
 ## 读写分离自动路由
@@ -281,6 +340,10 @@ Db::transaction(function () {
     Db::table('orders')->insert([...]); // 主库
 });
 ```
+
+> **事务内读写一致性**：开启事务后（`Db::beginTransaction()` / `Db::transaction()`），所有读操作（含 `Db::table()`、
+> `Db::select()`）都会被强制路由到**主库（写连接）**，直到事务提交 / 回滚。这样可以读到本事务内尚未提交的写入，
+> 避免读写分离把查询引到从库而看不到未提交数据。嵌套事务以深度计数，只有最外层提交 / 回滚后才恢复读写分离。
 
 ### 强制使用主库
 

@@ -616,8 +616,10 @@ class QueryBuilder
 
     /**
      * 插入数据
+     *
+     * @return int|string 最后插入的 ID（取决于底层执行器，如 PDO::lastInsertId）
      */
-    public function insert(array $data): bool
+    public function insert(array $data): int|string
     {
         $columns = array_keys($data);
         $values = array_values($data);
@@ -639,11 +641,13 @@ class QueryBuilder
 
     /**
      * 批量插入
+     *
+     * @return int|string 最后插入的 ID
      */
-    public function insertAll(array $records): bool
+    public function insertAll(array $records): int|string
     {
         if (empty($records)) {
-            return false;
+            return 0;
         }
 
         $columns = array_keys($records[0]);

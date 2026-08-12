@@ -24,6 +24,7 @@ class SymfonyConnector implements ConnectorInterface
             }
         }
 
+        $config['database_driver'] = \Kode\Database\Config\Driver::dbTypeFromConfig($config)->value;
         return new PdoConnection($config);
     }
 

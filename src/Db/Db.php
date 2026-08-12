@@ -38,6 +38,14 @@ class Db
     protected static bool $readWriteSplit = false;
 
     /**
+     * 当前事务嵌套深度
+     *
+     * 当事务进行中时，所有读操作必须走主库（写连接），否则会读不到本事务内尚未提交的写入，
+     * 破坏事务原子性。用嵌套深度计数支持 savepoint 形式的嵌套事务。
+     */
+    protected static int $transactionDepth = 0;
+
+    /**
      * 初始化默认配置
      *
      * @param array<string, mixed>|\Kode\Database\Config\DatabaseConfig $config
@@ -108,9 +116,16 @@ class Db
 
     /**
      * 获取读连接（从库）
+     *
+     * 事务进行中强制走主库（写连接）：事务内的查询应能看到本事务未提交的写入，
+     * 否则读写分离会把查询路由到从库而看不到未提交数据。
      */
     protected static function getReadConnection(): mixed
     {
+        if (self::$transactionDepth > 0) {
+            return self::getWriteConnection();
+        }
+
         if (!self::$readWriteSplit || self::$readConnection === null) {
             return self::getConnection();
         }
@@ -159,6 +174,17 @@ class Db
             return self::$connections[$name] ?? self::$config;
         }
         return self::$config;
+    }
+
+    /**
+     * 获取指定连接的数据库方言（mysql / pgsql / sqlite / sqlsrv / oracle）
+     *
+     * 统一解析 driver 字段（可能是 ORM 连接器名或数据库类型），返回真正的数据库类型，
+     * 供 Schema / 迁移生成方言正确的 DDL。
+     */
+    public static function getDriver(?string $name = null): string
+    {
+        return \Kode\Database\Config\Driver::dbTypeFromConfig(self::getConfig($name))->value;
     }
 
     /**
@@ -270,6 +296,7 @@ class Db
     {
         $connection = self::getWriteConnection();
         $connection->beginTransaction();
+        self::$transactionDepth++;
     }
 
     /**
@@ -279,6 +306,7 @@ class Db
     {
         $connection = self::getWriteConnection();
         $connection->commit();
+        self::$transactionDepth = max(0, self::$transactionDepth - 1);
     }
 
     /**
@@ -288,6 +316,7 @@ class Db
     {
         $connection = self::getWriteConnection();
         $connection->rollBack();
+        self::$transactionDepth = max(0, self::$transactionDepth - 1);
     }
 
     /**
@@ -306,6 +335,30 @@ class Db
             self::rollback();
             throw $e;
         }
+    }
+
+    /**
+     * 当前是否处于事务中
+     */
+    public static function inTransaction(): bool
+    {
+        return self::$transactionDepth > 0;
+    }
+
+    /**
+     * 进入事务（递增嵌套深度），供 Connection 封装类在自身事务中同步读写分离状态
+     */
+    public static function enterTransaction(): void
+    {
+        self::$transactionDepth++;
+    }
+
+    /**
+     * 离开事务（递减嵌套深度）
+     */
+    public static function leaveTransaction(): void
+    {
+        self::$transactionDepth = max(0, self::$transactionDepth - 1);
     }
 
     /**
@@ -719,13 +772,7 @@ class Db
      */
     public static function tableExists(string $table): bool
     {
-        $config = self::$config;
-        $database = $config['database'] ?? '';
-        $result = self::select(
-            "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?",
-            [$database, $table]
-        );
-        return !empty($result);
+        return (new Connection(self::$defaultConnection))->tableExists($table);
     }
 
     /**

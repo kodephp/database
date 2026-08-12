@@ -34,9 +34,32 @@ class Schema
     /** @var string 排序规则 */
     protected string $collation = 'utf8mb4_unicode_ci';
 
-    public function __construct(string $table)
+    /** @var string 数据库方言：mysql / pgsql / sqlite / sqlsrv / oracle */
+    protected string $driver = 'mysql';
+
+    /** @var string 全局默认方言（由迁移运行器按实际连接设置） */
+    protected static string $defaultDriver = 'mysql';
+
+    public function __construct(string $table, string $driver = null)
     {
         $this->table = $table;
+        $this->driver = strtolower($driver ?? self::$defaultDriver);
+    }
+
+    /**
+     * 设置全局默认数据库方言（迁移运行前调用一次即可，使迁移文件无需逐个传 driver）
+     */
+    public static function setDefaultDriver(string $driver): void
+    {
+        self::$defaultDriver = strtolower($driver);
+    }
+
+    /**
+     * 获取当前使用的方言
+     */
+    public function getDriver(): string
+    {
+        return $this->driver;
     }
 
     /**
@@ -44,12 +67,13 @@ class Schema
      *
      * @param string $table 表名
      * @param callable $callback 回调
+     * @param string|null $driver 数据库方言（null 时使用全局默认）
      * @return string SQL 语句
      * @example Schema::create('users', function ($t) { $t->id(); $t->string('name'); })
      */
-    public static function create(string $table, callable $callback): string
+    public static function create(string $table, callable $callback, string $driver = null): string
     {
-        $schema = new self($table);
+        $schema = new self($table, $driver);
         $callback($schema);
         return $schema->toSql();
     }
@@ -59,12 +83,13 @@ class Schema
      *
      * @param string $table 表名
      * @param callable $callback 回调
+     * @param string|null $driver 数据库方言（null 时使用全局默认）
      * @return string SQL 语句
      * @example Schema::table('users', function ($t) { $t->addColumn('phone', 'string', ['length' => 11]); })
      */
-    public static function table(string $table, callable $callback): string
+    public static function table(string $table, callable $callback, string $driver = null): string
     {
-        $schema = new self($table);
+        $schema = new self($table, $driver);
         $callback($schema);
         return $schema->toAlterSql();
     }
@@ -84,11 +109,19 @@ class Schema
      * 判断表是否存在
      *
      * @param string $table 表名
+     * @param string|null $driver 数据库方言
      * @return string SQL 语句
      */
-    public static function hasTable(string $table): string
+    public static function hasTable(string $table, string $driver = null): string
     {
-        return "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = '{$table}'";
+        $driver = strtolower($driver ?? self::$defaultDriver);
+
+        return match ($driver) {
+            'sqlite' => "SELECT name FROM sqlite_master WHERE type='table' AND name = '{$table}'",
+            'pgsql' => "SELECT tablename FROM pg_tables WHERE schemaname = CURRENT_SCHEMA() AND tablename = '{$table}'",
+            'sqlsrv' => "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = SCHEMA_NAME() AND TABLE_NAME = '{$table}'",
+            default => "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = '{$table}'",
+        };
     }
 
     /**
@@ -96,11 +129,19 @@ class Schema
      *
      * @param string $table 表名
      * @param string $column 字段名
+     * @param string|null $driver 数据库方言
      * @return string SQL 语句
      */
-    public static function hasColumn(string $table, string $column): string
+    public static function hasColumn(string $table, string $column, string $driver = null): string
     {
-        return "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = '{$table}' AND COLUMN_NAME = '{$column}'";
+        $driver = strtolower($driver ?? self::$defaultDriver);
+
+        return match ($driver) {
+            'sqlite' => "SELECT name FROM pragma_table_info('{$table}') WHERE name = '{$column}'",
+            'pgsql' => "SELECT column_name FROM information_schema.columns WHERE table_schema = CURRENT_SCHEMA() AND table_name = '{$table}' AND column_name = '{$column}'",
+            'sqlsrv' => "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = SCHEMA_NAME() AND TABLE_NAME = '{$table}' AND COLUMN_NAME = '{$column}'",
+            default => "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = '{$table}' AND COLUMN_NAME = '{$column}'",
+        };
     }
 
     /**
@@ -835,6 +876,10 @@ class Schema
     /**
      * 生成 SQL
      *
+     * 表级选项（ENGINE / CHARSET / COLLATE / AUTO_INCREMENT / COMMENT）随方言变化：
+     *  - MySQL：完整支持
+     *  - PostgreSQL / SQLite / SQL Server / Oracle：无 ENGINE，自增已由列类型/关键字表达，故省略
+     *
      * @return string SQL 语句
      */
     public function toSql(): string
@@ -843,6 +888,7 @@ class Schema
 
         $columnDefs = [];
         foreach ($this->columns as $column) {
+            $column->setDriver($this->driver);
             $def = $column->toSql();
             if (!empty($def)) {
                 $columnDefs[] = '  ' . $def;
@@ -866,16 +912,23 @@ class Schema
         }
 
         $parts[] = implode(",\n", $columnDefs);
-        $parts[] = ') ENGINE=' . $this->engine;
-        $parts[] = ' DEFAULT CHARSET=' . $this->charset;
-        $parts[] = ' COLLATE=' . $this->collation;
+        $parts[] = ')';
 
-        if (isset($this->options['auto_increment'])) {
-            $parts[] = ' AUTO_INCREMENT=' . $this->options['auto_increment'];
-        }
+        // 表选项仅 MySQL 支持
+        if ($this->driver === 'mysql') {
+            $parts[] = ' ENGINE=' . $this->engine;
+            $parts[] = ' DEFAULT CHARSET=' . $this->charset;
+            $parts[] = ' COLLATE=' . $this->collation;
 
-        if (isset($this->options['comment'])) {
-            $parts[] = " COMMENT='" . addslashes($this->options['comment']) . "'";
+            if (isset($this->options['auto_increment'])) {
+                $parts[] = ' AUTO_INCREMENT=' . $this->options['auto_increment'];
+            }
+
+            if (isset($this->options['comment'])) {
+                $parts[] = " COMMENT='" . addslashes($this->options['comment']) . "'";
+            }
+        } elseif ($this->driver === 'pgsql' && isset($this->options['comment'])) {
+            // PostgreSQL 不支持内联表 COMMENT，单独语句在外部执行；此处省略
         }
 
         return implode("\n", $parts);
@@ -891,6 +944,7 @@ class Schema
         $parts = ["ALTER TABLE {$this->table}"];
 
         foreach ($this->columns as $column) {
+            $column->setDriver($this->driver);
             $def = $column->toSql();
             if (empty($def)) {
                 continue;

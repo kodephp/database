@@ -18,7 +18,7 @@ use PDOException;
  */
 class PdoConnection implements ExecutorInterface
 {
-    /** 支持的 PDO 驱动 -> PDO DSN 驱动名 */
+    /** 支持的数据库类型别名 -> PDO DSN 驱动名 */
     private const PDO_DRIVERS = [
         'mysql' => 'mysql',
         'pgsql' => 'pgsql',
@@ -28,6 +28,8 @@ class PdoConnection implements ExecutorInterface
         'sqlsrv' => 'sqlsrv',
         'sqlserver' => 'sqlsrv',
         'dblib' => 'sqlsrv',
+        'oracle' => 'oci',
+        'oci' => 'oci',
     ];
 
     protected array $config;
@@ -78,11 +80,20 @@ class PdoConnection implements ExecutorInterface
 
     /**
      * 根据配置构建 PDO DSN
+     *
+     * 数据库类型解析优先级：pdo_driver（显式）> database_driver（规范化）> driver（兼容旧写法）。
+     * 这样即便 driver 被用作 ORM 连接器选择器（如 'pdo'），也能正确生成目标数据库 DSN，
+     * 使内置 PDO 执行器支持 mysql / pgsql / sqlite / sqlsrv / oracle 全部数据库。
      */
     protected function buildDsn(): string
     {
-        $driver = strtolower($this->config['driver'] ?? 'mysql');
-        $pdoDriver = self::PDO_DRIVERS[$driver] ?? 'mysql';
+        $dbType = strtolower(
+            $this->config['pdo_driver']
+            ?? $this->config['database_driver']
+            ?? $this->config['driver']
+            ?? 'mysql'
+        );
+        $pdoDriver = self::PDO_DRIVERS[$dbType] ?? 'mysql';
         $charset = $this->config['charset'] ?? 'utf8mb4';
 
         return match ($pdoDriver) {
@@ -98,6 +109,13 @@ class PdoConnection implements ExecutorInterface
                 $this->config['host'] ?? 'localhost',
                 $this->config['port'] ?? 1433,
                 $this->config['database'] ?? ''
+            ),
+            'oci' => sprintf(
+                'oci:dbname=//%s:%s/%s;charset=%s',
+                $this->config['host'] ?? '127.0.0.1',
+                $this->config['port'] ?? 1521,
+                $this->config['database'] ?? 'XE',
+                $charset
             ),
             default => sprintf(
                 'mysql:host=%s;port=%s;dbname=%s;charset=%s',
