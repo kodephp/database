@@ -4,26 +4,16 @@ declare(strict_types=1);
 
 namespace Kode\Database\Connection;
 
-use Kode\Database\Connection\Bridge\ThinkPHPBridge;
-
 /**
- * ThinkPHP 数据库连接器
+ * 内置 PDO 连接器
  *
- * ORM 无关设计：若项目已安装并初始化 topthink/think-orm，则复用其连接管理器；
- * 否则回退到内置 PdoConnection，保证开箱即用。
+ * 当希望显式使用内置 PDO 执行器（不依赖任何第三方 ORM）时，可设置 driver=pdo。
  */
-class ThinkPHPConnector implements ConnectorInterface
+class PdoConnector implements ConnectorInterface
 {
     #[\Override]
     public function connect(array $config): mixed
     {
-        if (class_exists(\think\facade\Db::class)) {
-            try {
-                return new ThinkPHPBridge($config);
-            } catch (\Throwable) {
-            }
-        }
-
         return new PdoConnection($config);
     }
 

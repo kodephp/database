@@ -4,30 +4,41 @@ declare(strict_types=1);
 
 namespace Kode\Database\Connection;
 
+use Kode\Database\Connection\Bridge\LaravelBridge;
+
 /**
- * Laravel 数据库连接器适配器
+ * Laravel 数据库连接器
+ *
+ * ORM 无关设计：若项目已安装并初始化 illuminate/database，则复用其连接管理器；
+ * 否则回退到内置 PdoConnection，保证开箱即用。
  */
 class LaravelConnector implements ConnectorInterface
 {
+    #[\Override]
     public function connect(array $config): mixed
     {
-        return new class($config) {
-            public function __construct(private array $config) {}
-
-            public function getConfig(): array
-            {
-                return $this->config;
+        if (class_exists(\Illuminate\Database\Capsule\Manager::class)
+            || class_exists(\Illuminate\Support\Facades\DB::class)) {
+            try {
+                return new LaravelBridge($config);
+            } catch (\Throwable) {
             }
-        };
+        }
+
+        return new PdoConnection($config);
     }
 
+    #[\Override]
     public function disconnect(mixed $connection): void
     {
-        unset($connection);
+        if ($connection instanceof ExecutorInterface) {
+            $connection->disconnect();
+        }
     }
 
+    #[\Override]
     public function isConnected(mixed $connection): bool
     {
-        return $connection !== null;
+        return $connection instanceof ExecutorInterface && $connection->isConnected();
     }
 }

@@ -18,12 +18,18 @@ class ConnectionFactory
 
     /**
      * 注册默认连接器
+     *
+     * 支持 Laravel / ThinkPHP / Symfony(Doctrine) / Hyperf 四大 ORM，
+     * 开发者安装哪一个就注册哪一个对应驱动（其余自动回退到内置 PDO 执行器）。
      */
     protected function registerDefaultConnectors(): void
     {
         $this->connectors = [
             'laravel' => new LaravelConnector(),
             'thinkphp' => new ThinkPHPConnector(),
+            'symfony' => new SymfonyConnector(),
+            'hyperf' => new HyperfConnector(),
+            'pdo' => new PdoConnector(),
             'default' => new LaravelConnector(),
         ];
     }

@@ -36,9 +36,15 @@ class Db
 
     /**
      * 初始化默认配置
+     *
+     * @param array<string, mixed>|\Kode\Database\Config\DatabaseConfig $config
      */
-    public static function setConfig(array $config): void
+    public static function setConfig(array|\Kode\Database\Config\DatabaseConfig $config): void
     {
+        if ($config instanceof \Kode\Database\Config\DatabaseConfig) {
+            $config = $config->toArray();
+        }
+
         self::$config = $config;
         self::$factory = new ConnectionFactory();
 

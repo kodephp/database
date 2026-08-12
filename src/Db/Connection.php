@@ -26,11 +26,11 @@ class Connection
     /** @var string 数据库驱动类型 */
     protected string $driver = 'mysql';
 
-    /** @var array 支持的驱动类型 */
-    public const SUPPORTED_DRIVERS = ['mysql', 'pgsql', 'sqlite', 'sqlsrv', 'oracle'];
+    /** @var array<int, string> 支持的驱动类型 */
+    public const array SUPPORTED_DRIVERS = ['mysql', 'pgsql', 'sqlite', 'sqlsrv', 'oracle'];
 
-    /** @var array 驱动特定方法映射 */
-    public const DRIVER_SPECIFIC_METHODS = [
+    /** @var array<string, array<string, string|null>> 驱动特定方法映射 */
+    public const array DRIVER_SPECIFIC_METHODS = [
         'pgsql' => [
             'lastInsertId' => 'lastval',
             'limit' => 'LIMIT',

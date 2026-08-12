@@ -4,22 +4,22 @@ declare(strict_types=1);
 
 namespace Kode\Database\Connection;
 
-use Kode\Database\Connection\Bridge\ThinkPHPBridge;
+use Kode\Database\Connection\Bridge\HyperfBridge;
 
 /**
- * ThinkPHP 数据库连接器
+ * Hyperf 数据库连接器
  *
- * ORM 无关设计：若项目已安装并初始化 topthink/think-orm，则复用其连接管理器；
+ * ORM 无关设计：若项目已安装并初始化 hyperf/database，则复用其连接管理器；
  * 否则回退到内置 PdoConnection，保证开箱即用。
  */
-class ThinkPHPConnector implements ConnectorInterface
+class HyperfConnector implements ConnectorInterface
 {
     #[\Override]
     public function connect(array $config): mixed
     {
-        if (class_exists(\think\facade\Db::class)) {
+        if (class_exists(\Hyperf\DbConnection\Db::class)) {
             try {
-                return new ThinkPHPBridge($config);
+                return new HyperfBridge($config);
             } catch (\Throwable) {
             }
         }

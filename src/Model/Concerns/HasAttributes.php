@@ -174,15 +174,34 @@ trait HasAttributes
             'float', 'double' => (float) $value,
             'string' => (string) $value,
             'bool', 'boolean' => (bool) $value,
-            'array' => is_array($value) ? $value : json_decode($value, true),
-            'json' => is_array($value) ? json_encode($value) : $value,
-            'object' => is_object($value) ? $value : json_decode($value),
+            'array' => $this->castToArray($value),
+            'json' => is_array($value) ? json_encode($value, JSON_UNESCAPED_UNICODE) : $value,
+            'object' => is_object($value) ? $value : (is_string($value) && json_validate($value) ? json_decode($value) : $value),
             'datetime', 'date' => $value instanceof \DateTimeInterface ? $value : new \DateTime($value),
             'timestamp' => $value instanceof \DateTimeInterface ? $value->getTimestamp() : (int) $value,
             'decimal' => (float) $value,
             'uuid' => (string) $value,
             default => $value,
         };
+    }
+
+    /**
+     * 安全的 array 类型转换（PHP 8.3 json_validate 校验后解码）
+     */
+    protected function castToArray(mixed $value): array
+    {
+        if (is_array($value)) {
+            return $value;
+        }
+
+        if (is_string($value) && json_validate($value)) {
+            $decoded = json_decode($value, true);
+            if (is_array($decoded)) {
+                return $decoded;
+            }
+        }
+
+        return (array) $value;
     }
 
     /**

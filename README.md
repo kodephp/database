@@ -1,25 +1,29 @@
 # Kode\Database
 
-轻量级数据库适配器，兼容 Laravel、ThinkPHP、Hyperf ORM，支持 **多进程、多线程、协程** 环境下的数据库操作。
+轻量级数据库适配器，**ORM 无关设计**：可自由选用 Laravel / ThinkPHP / Symfony(Doctrine) / Hyperf ORM，亦可零依赖直接基于内置 PDO 执行器运行，支持 **多进程、多线程、协程** 环境下的数据库操作。
 
 ## 特性
 
+- **ORM 无关（自由选择）**：不锁定任何 ORM。开发者安装 Laravel / ThinkPHP / Symfony / Hyperf 中任意一个即可，连接器会自动桥接其连接管理器；未安装任何 ORM 时自动回退到内置 PDO 执行器，开箱即用
+- **Webman 风格 API**：`Db::table()` 静态门面与 Webman 完全兼容，可直接参考 [Webman 数据库教程](https://webman.workerman.net/doc/zh-cn/db/tutorial.html) 使用
 - **全 ORM 支持**：一对一、一对多、多对多、多态关联、预加载
 - **多数据库支持**：主从、读写分离自动路由、跨库关联查询
 - **分库分表**：按年月、按哈希、按后缀、范围映射、自动路由
 - **连接池管理**：协程上下文隔离，支持 Fiber
 - **事件监听**：SQL 监听、事务事件、模型事件钩子
 - **Schema 定义**：表结构构建器
-- **获取器/修改器**：类型转换、属性访问
+- **迁移（Migrations）**：基于 Schema 的迁移基类与运行器，自动记录迁移历史
+- **获取器/修改器**：类型转换、属性访问（PHP 8.3 `json_validate` 安全校验）
 - **软删除**：软删除恢复机制
 - **模型事件**：钩子函数、观察者模式
 - **批量操作**：Chunk 分块、Upsert、批量插入优化
 - **行锁定**：FOR UPDATE、共享锁支持
-- **兼容主流框架**：Laravel、ThinkPHP、Hyperf、Webman
+- **兼容主流框架**：Laravel、ThinkPHP、Hyperf、Symfony、Webman
 
 ## 环境要求
 
-- PHP >= 8.1
+- **PHP >= 8.3**（已使用 typed constants、`#[Override]`、`json_validate`、readonly 值对象等现代特性）
+- 依赖 `ext-pdo`
 - 兼容 Swoole、Workerman、RoadRunner 等常驻内存环境
 
 ## 安装
@@ -89,6 +93,141 @@ Db::addConnection('stock_db', [
     'password' => '',
 ]);
 ```
+
+---
+
+## ORM 自由选择（不锁定任何 ORM）
+
+`kode/database` 采用 **连接器（Connector）架构**：连接器只负责"拿到一个连接执行器"，具体用哪个 ORM 由你决定。
+默认提供 `laravel` / `thinkphp` / `symfony`（基于 Doctrine DBAL）/ `hyperf` / `pdo` 五种驱动，
+**你习惯哪个就 `composer require` 哪个，其余自动回退到内置 PDO 执行器，互不干扰。**
+
+```bash
+# 任选其一安装（也可全部安装，按需切换）
+composer require illuminate/database      # Laravel ORM
+composer require topthink/think-orm       # ThinkPHP ORM
+composer require doctrine/dbal            # Symfony 体系底层（symfony/orm 也基于它）
+composer require hyperf/database          # Hyperf ORM
+# 不装任何 ORM 也能跑，自动使用内置 PDO 执行器
+```
+
+```php
+use Kode\Database\Db\Db;
+
+// driver 决定连接器的桥接目标；未安装对应 ORM 时自动回退到 PDO
+Db::setConfig([
+    'driver'   => 'laravel',   // laravel | thinkphp | symfony | hyperf | pdo
+    'host'     => '127.0.0.1',
+    'port'     => 3306,
+    'database' => 'app',
+    'username' => 'root',
+    'password' => '',
+]);
+
+// 之后所有用法完全一致，与具体 ORM 解耦
+$users = Db::table('users')->where('status', 1)->orderBy('id', 'desc')->paginate(1, 15);
+```
+
+> 切换 ORM 只需改 `driver` 一个字段，业务代码（模型、QueryBuilder）零改动。
+
+## 与 Webman 融合
+
+库内置的 `Db::table()` 静态门面与 Webman 完全兼容，可直接参考官方教程
+[Webman 数据库教程](https://webman.workerman.net/doc/zh-cn/db/tutorial.html) 使用：
+
+```php
+// 在 webman 的 config/plugin/kode/database 或 bootstrap 中初始化一次
+Db::setConfig(config('database') ?? [
+    'driver'   => 'pdo',
+    'host'     => '127.0.0.1',
+    'database' => 'webman',
+    'username' => 'root',
+    'password' => '',
+]);
+
+// 业务代码中写法与 Webman 原生一致
+use Kode\Database\Db\Db;
+
+$list = Db::table('user')->where('age', '>', 18)->orderBy('id', 'desc')->get();
+$row  = Db::table('user')->where('name', 'tom')->first();
+Db::table('user')->insert(['name' => 'jerry', 'age' => 20]);
+Db::table('user')->where('id', 1)->update(['age' => 21]);
+```
+
+若你的项目原本就用了 Webman 自带的 `thinkorm` / `illuminate/database`，把 `driver` 设为对应的
+`thinkphp` / `laravel` 即可无缝复用既有 ORM 的连接管理器，无需改动已有模型。
+
+## 不可变配置对象 DatabaseConfig
+
+除了数组，`Db::setConfig()` 也接受类型安全的 `DatabaseConfig` 值对象（readonly 类）：
+
+```php
+use Kode\Database\Config\DatabaseConfig;
+use Kode\Database\Db\Db;
+
+$config = new DatabaseConfig([
+    'driver'   => 'mysql',
+    'host'     => '127.0.0.1',
+    'database' => 'app',
+    'username' => 'root',
+    'password' => '',
+]);
+
+Db::setConfig($config);
+
+// 不可变对象，切换库返回新实例（原实例不变）
+$other = $config->withDatabase('logs');
+```
+
+## 迁移（Migrations）
+
+提供框架无关的迁移基类与运行器，基于已有的 `Schema` 构建表结构，并自动记录到 `migrations` 表。
+
+```php
+// database/migrations/2024_01_01_000000_create_users_table.php
+use Kode\Database\Database\Migrations\Migration;
+use Kode\Database\Schema\Schema;
+
+class CreateUsersTable extends Migration
+{
+    public function up(): void
+    {
+        $this->create('users', function (Schema $t) {
+            $t->id();
+            $t->string('name', 64);
+            $t->string('email')->unique();
+            $t->integer('age')->default(0);
+            $t->timestamps();
+            $t->softDeletes();
+        });
+    }
+
+    public function down(): void
+    {
+        $this->drop('users');
+    }
+}
+```
+
+```php
+use Kode\Database\Database\Migrations\Migrator;
+use Kode\Database\Db\Db;
+
+Db::setConfig([/* ... */]);
+
+$migrator = new Migrator(__DIR__ . '/database/migrations');
+
+// 执行全部待运行迁移
+$ran = $migrator->run();
+// 只跑接下来的 1 步
+$migrator->run(1);
+// 回滚最近一个批次
+$migrator->rollback();
+// 回滚全部
+$migrator->reset();
+```
+
+> 迁移文件名建议以时间戳前缀命名（如 `2024_01_01_000000_xxx.php`），运行器会按文件名升序执行。
 
 ---
 

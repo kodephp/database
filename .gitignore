@@ -1,6 +1,16 @@
 # Trae
 .trae/
 
+# WorkBuddy（AI 助手本地数据，不入库）
+.workbuddy/
+
+# Changelog（本地变更记录，不入库）
+changelog
+changelog.*
+CHANGELOG
+CHANGELOG*
+/changelog/
+
 # Composer
 /vendor/
 composer.lock
