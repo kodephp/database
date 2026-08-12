@@ -25,6 +25,9 @@ class Db
     /** @var array<string, array> 多数据库配置 */
     protected static array $connections = [];
 
+    /** @var array<string, mixed> 非池化连接缓存（按连接名复用同一底层 PDO，保证事务原子性） */
+    protected static array $connectionCache = [];
+
     /** @var string 默认连接名 */
     protected static string $defaultConnection = 'default';
 
@@ -320,12 +323,37 @@ class Db
             return PoolManager::getConnection(self::$config['driver'] ?? $name);
         }
 
+        if (isset(self::$connectionCache[$name])) {
+            return self::$connectionCache[$name];
+        }
+
         if (self::$factory === null) {
             self::$factory = new ConnectionFactory();
         }
 
         $config = self::$connections[$name] ?? self::$config;
-        return self::$factory->make($config);
+        $connection = self::$factory->make($config);
+        self::$connectionCache[$name] = $connection;
+
+        return $connection;
+    }
+
+    /**
+     * 断开并清除全部已缓存连接
+     *
+     * 常驻内存进程（Workerman / Swoole / RoadRunner）应在每个请求/协程结束时调用，
+     * 避免连接跨作用域复用，并清理上一个作用域可能遗留的未提交事务。
+     */
+    public static function disconnect(): void
+    {
+        foreach (self::$connectionCache as $connection) {
+            if (method_exists($connection, 'disconnect')) {
+                $connection->disconnect();
+            }
+        }
+
+        self::$connectionCache = [];
+        PoolManager::clear();
     }
 
     /**
@@ -341,7 +369,7 @@ class Db
      */
     public static function clearPool(): void
     {
-        PoolManager::clear();
+        self::disconnect();
     }
 
     /**
@@ -447,7 +475,7 @@ class Db
      */
     public static function reconnect(): void
     {
-        PoolManager::clear();
+        self::disconnect();
     }
 
     /**
@@ -971,7 +999,7 @@ class Db
      */
     public static function closeAllConnections(): void
     {
-        PoolManager::clear();
+        self::disconnect();
     }
 
     /**

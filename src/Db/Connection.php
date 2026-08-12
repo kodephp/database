@@ -469,18 +469,22 @@ class Connection
     {
         $config = Db::getConfig($this->name);
 
-        if (!empty($config['pool'])) {
-            $connection = PoolManager::getConnection($this->name);
-        } else {
-            $factory = new \Kode\Database\Connection\ConnectionFactory();
-            $connection = $factory->make($config);
-        }
-
+        // 跨库场景（useDatabase 指定了 database）需独立连接，避免污染共享连接的库名
         if ($this->database !== null) {
+            if (!empty($config['pool'])) {
+                $connection = PoolManager::getConnection($this->name);
+            } else {
+                $factory = new \Kode\Database\Connection\ConnectionFactory();
+                $connection = $factory->make($config);
+            }
+
             $connection->setDatabase($this->database);
+
+            return $connection;
         }
 
-        return $connection;
+        // 普通场景复用 Db 的连接缓存，保证同一连接名在事务内使用同一底层 PDO
+        return Db::getConnection($this->name);
     }
 
     /**
