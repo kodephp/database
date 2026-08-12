@@ -28,7 +28,7 @@ class Column
             $sql .= ' UNSIGNED';
         }
 
-        if ($this->options['not_null'] ?? false || $this->options['primary_key'] ?? false) {
+        if (($this->options['not_null'] ?? false) || ($this->options['primary_key'] ?? false)) {
             $sql .= ' NOT NULL';
         }
 
