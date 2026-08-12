@@ -66,6 +66,7 @@ class PdoConnection implements ExecutorInterface
             $this->pdo = new PDO($dsn, $username, $password, $options);
         } catch (PDOException $e) {
             throw new \Kode\Database\Exception\ConnectionException(
+                '',
                 'PDO 连接失败: ' . $e->getMessage(),
                 (int) $e->getCode(),
                 $e

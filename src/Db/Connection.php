@@ -370,9 +370,9 @@ class Connection
      *
      * @param string $sql SQL语句
      * @param array $bindings 参数绑定
-     * @return bool
+     * @return int|string 最后插入的 ID（PDO::lastInsertId）
      */
-    public function insert(string $sql, array $bindings = []): bool
+    public function insert(string $sql, array $bindings = []): int|string
     {
         $connection = $this->getConnection();
         return $connection->insert($sql, $bindings);

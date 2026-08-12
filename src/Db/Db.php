@@ -221,7 +221,7 @@ class Db
      *
      * @example Db::insert('INSERT INTO users (name) VALUES (?)', ['test'])
      */
-    public static function insert(string $sql, array $bindings = []): bool
+    public static function insert(string $sql, array $bindings = []): int|string
     {
         $connection = self::getWriteConnection();
         return $connection->insert($sql, $bindings);
