@@ -44,6 +44,11 @@ class Column
             $sql .= ' NOT NULL';
         }
 
+        // 内联唯一约束（单字段唯一）。多字段唯一请用 Schema::uniqueKey()
+        if ($this->options['unique'] ?? false) {
+            $sql .= ' UNIQUE';
+        }
+
         // 自增语法：MySQL 用 AUTO_INCREMENT；SQLite 用 AUTOINCREMENT；
         // SQL Server 用 IDENTITY(1,1)；PostgreSQL 在 buildType() 中已转为 SERIAL/BIGSERIAL。
         if ($this->options['auto_increment'] ?? false) {
@@ -175,6 +180,14 @@ class Column
     public function setUnsigned(bool $unsigned = true): void
     {
         $this->options['unsigned'] = $unsigned;
+    }
+
+    /**
+     * 设置内联唯一约束
+     */
+    public function setUnique(bool $unique = true): void
+    {
+        $this->options['unique'] = $unique;
     }
 
     /**

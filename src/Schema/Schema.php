@@ -776,6 +776,27 @@ class Schema
     }
 
     /**
+     * 为最后一个字段添加内联唯一约束
+     *
+     * 单字段唯一推荐用流式写法：$t->string('email')->unique()；
+     * 多字段联合唯一请用 {@see uniqueKey()}。
+     *
+     * @return $this
+     */
+    public function unique(): static
+    {
+        if (empty($this->columns)) {
+            return $this;
+        }
+
+        $lastColumn = end($this->columns);
+        if ($lastColumn instanceof Column) {
+            $lastColumn->setUnique(true);
+        }
+        return $this;
+    }
+
+    /**
      * 设置字段注释
      *
      * @param string $comment 注释

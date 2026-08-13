@@ -3,7 +3,7 @@
     "description": "轻量级数据库适配器，ORM 无关设计：可自由选用 Laravel / ThinkPHP / Symfony(Doctrine) / Hyperf ORM，支持多数据库连接、读写分离、分库分表、连接池、协程、事件监听、Schema 与迁移",
     "type": "library",
     "license": "Apache-2.0",
-    "version": "1.15.4",
+    "version": "1.15.5",
     "autoload": {
         "psr-4": {
             "Kode\\Database\\": "src/"
