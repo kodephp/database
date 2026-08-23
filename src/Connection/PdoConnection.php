@@ -6,6 +6,7 @@ namespace Kode\Database\Connection;
 
 use PDO;
 use PDOException;
+use PDOStatement;
 
 /**
  * 内置 PDO 执行器（通用回退实现）
@@ -32,9 +33,23 @@ class PdoConnection implements ExecutorInterface
         'oci' => 'oci',
     ];
 
+    /** 预编译语句缓存条数上限（超出时不缓存，但仍返回可用语句） */
+    private const STMT_CACHE_LIMIT = 256;
+
     protected array $config;
     protected ?PDO $pdo = null;
     protected int $transactionLevel = 0;
+
+    /**
+     * 预编译语句缓存（按 SQL 文本缓存 PDOStatement）
+     *
+     * 常驻内存场景下复用同一 SQL 的 PDOStatement，避免每次查询都走一次 PREPARE
+     * 网络往返；语义对齐 Doctrine/Laravel 的语句缓存。上限 STMT_CACHE_LIMIT（256）
+     * 条，disconnect() 时清空。
+     *
+     * @var array<string, PDOStatement>
+     */
+    protected array $stmtCache = [];
 
     public function __construct(array $config)
     {
@@ -43,10 +58,14 @@ class PdoConnection implements ExecutorInterface
 
     /**
      * 建立（或复用）底层 PDO 连接
+     *
+     * 常驻内存下不再每次查询发 SELECT 1 探活（消除每查 1 次的额外 DB 往返），
+     * 已连接即直接复用；连接失效由执行语句时抛出的 PDOException 暴露，
+     * 由 select/insert/update/delete 捕获后断连重试一次（行为不变、更省）。
      */
     protected function ensureConnected(): PDO
     {
-        if ($this->pdo !== null && $this->isConnected()) {
+        if ($this->pdo !== null) {
             return $this->pdo;
         }
 
@@ -127,36 +146,93 @@ class PdoConnection implements ExecutorInterface
         };
     }
 
+    /**
+     * 准备（或复用缓存的）PDO 预编译语句
+     *
+     * 同一 SQL 文本命中缓存则直接返回，避免常驻内存下重复 PREPARE 网络往返；
+     * 缓存满 STMT_CACHE_LIMIT（256）条时不缓存但仍返回可用语句。
+     */
+    protected function prepareStatement(string $sql): PDOStatement
+    {
+        if (isset($this->stmtCache[$sql])) {
+            return $this->stmtCache[$sql];
+        }
+
+        $stmt = $this->ensureConnected()->prepare($sql);
+
+        if (count($this->stmtCache) < self::STMT_CACHE_LIMIT) {
+            $this->stmtCache[$sql] = $stmt;
+        }
+
+        return $stmt;
+    }
+
     #[\Override]
     public function select(string $sql, array $bindings = []): array
     {
-        $stmt = $this->ensureConnected()->prepare($sql);
-        $stmt->execute($bindings);
-        return $stmt->fetchAll(PDO::FETCH_ASSOC);
+        $execute = function () use ($sql, $bindings): array {
+            $stmt = $this->prepareStatement($sql);
+            $stmt->execute($bindings);
+            return $stmt->fetchAll(PDO::FETCH_ASSOC);
+        };
+
+        try {
+            return $execute();
+        } catch (PDOException) {
+            $this->disconnect();
+            return $execute();
+        }
     }
 
     #[\Override]
     public function insert(string $sql, array $bindings = []): int|string
     {
-        $stmt = $this->ensureConnected()->prepare($sql);
-        $stmt->execute($bindings);
-        return $this->ensureConnected()->lastInsertId();
+        $execute = function () use ($sql, $bindings): int|string {
+            $stmt = $this->prepareStatement($sql);
+            $stmt->execute($bindings);
+            return $this->ensureConnected()->lastInsertId();
+        };
+
+        try {
+            return $execute();
+        } catch (PDOException) {
+            $this->disconnect();
+            return $execute();
+        }
     }
 
     #[\Override]
     public function update(string $sql, array $bindings = []): int
     {
-        $stmt = $this->ensureConnected()->prepare($sql);
-        $stmt->execute($bindings);
-        return $stmt->rowCount();
+        $execute = function () use ($sql, $bindings): int {
+            $stmt = $this->prepareStatement($sql);
+            $stmt->execute($bindings);
+            return $stmt->rowCount();
+        };
+
+        try {
+            return $execute();
+        } catch (PDOException) {
+            $this->disconnect();
+            return $execute();
+        }
     }
 
     #[\Override]
     public function delete(string $sql, array $bindings = []): int
     {
-        $stmt = $this->ensureConnected()->prepare($sql);
-        $stmt->execute($bindings);
-        return $stmt->rowCount();
+        $execute = function () use ($sql, $bindings): int {
+            $stmt = $this->prepareStatement($sql);
+            $stmt->execute($bindings);
+            return $stmt->rowCount();
+        };
+
+        try {
+            return $execute();
+        } catch (PDOException) {
+            $this->disconnect();
+            return $execute();
+        }
     }
 
     #[\Override]
@@ -223,6 +299,7 @@ class PdoConnection implements ExecutorInterface
     {
         $this->pdo = null;
         $this->transactionLevel = 0;
+        $this->stmtCache = [];
     }
 
     #[\Override]

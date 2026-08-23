@@ -10,6 +10,7 @@
 - **多数据库支持**：主从、读写分离自动路由、跨库关联查询
 - **分库分表**：按年月、按哈希、按后缀、范围映射、自动路由
 - **连接池管理**：协程上下文隔离，支持 Fiber
+- **常驻内存优化**：内置 PDO 执行器支持预编译语句缓存（上限 256，按 SQL 文本复用 PDOStatement）、惰性断连重试（失效由 PDOException 暴露、捕获后重连重试一次）、免去每查一次 SELECT 1 探活，显著降低常驻内存场景下的 DB 往返
 - **事件监听**：SQL 监听、事务事件、模型事件钩子
 - **Schema 定义**：表结构构建器
 - **迁移（Migrations）**：基于 Schema 的迁移基类与运行器，自动记录迁移历史
@@ -2301,9 +2302,19 @@ echo $results['products'];
 src/
 ├── Connection/          # 数据库连接器
 │   ├── ConnectorInterface.php
+│   ├── ExecutorInterface.php  # 执行器契约（select/insert/update/delete/事务）
 │   ├── ConnectionFactory.php
+│   ├── PdoConnection.php     # 内置 PDO 执行器（语句缓存 + 断连重试，常驻内存优化）
+│   ├── PdoConnector.php
 │   ├── LaravelConnector.php
-│   └── ThinkPHPConnector.php
+│   ├── ThinkPHPConnector.php
+│   ├── SymfonyConnector.php
+│   ├── HyperfConnector.php
+│   └── Bridge/               # ORM 桥接
+│       ├── LaravelBridge.php
+│       ├── ThinkPHPBridge.php
+│       ├── SymfonyBridge.php
+│       └── HyperfBridge.php
 ├── Db/                  # 静态代理类
 │   ├── Db.php           # 主类（支持多数据库、分库分表）
 │   └── Connection.php   # 连接封装（支持跨库查询）
