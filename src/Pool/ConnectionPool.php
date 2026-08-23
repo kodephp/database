@@ -21,7 +21,11 @@ class ConnectionPool implements PoolInterface
     protected int $minConnections = 2;
     protected int $maxWaitTime = 30; // 最大等待时间（秒）
     protected bool $initialized = false;
-    protected \Swoole\Coroutine\Channel $channel;
+    /**
+     * Swoole 协程 Channel（仅协程运行时存在）。
+     * 非 Swoole 环境为 null，此时退化为「per-worker 连接缓存」（数组管理），不会因访问未初始化属性而 Fatal。
+     */
+    protected ?\Swoole\Coroutine\Channel $channel = null;
 
     public function __construct(array $config, string $driver = 'default')
     {
@@ -168,12 +172,17 @@ class ConnectionPool implements PoolInterface
             }
         }
 
-        // Fiber 协程环境
+        // Fiber 协程环境（须先确认确实处于 Fiber 内，否则 getCurrent() 返回 null 会致命）
         if (class_exists(\Fiber::class)) {
-            $fiberId = \Fiber::getCurrent()->getId();
-            $this->connections[$fiberId] = $connection;
-            unset($this->inUseConnections[$connectionId]);
-            return;
+            $fiber = $this->getCurrentFiber();
+            if ($fiber !== null) {
+                $fiberId = $this->getFiberId($fiber);
+                if ($fiberId !== null) {
+                    $this->connections[$fiberId] = $connection;
+                    unset($this->inUseConnections[$connectionId]);
+                    return;
+                }
+            }
         }
 
         // 普通环境

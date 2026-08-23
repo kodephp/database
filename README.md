@@ -2086,10 +2086,16 @@ PoolManager::clear();
 
 | 类型 | 说明 | 适用场景 |
 |------|------|---------|
-| `connection` | 普通连接池 | CLI、FastCGI、普通 Web 应用 |
-| `process` | 进程池 | 多进程环境（pcntl_fork） |
+| `connection` | 协程连接池（Swoole `Coroutine\Channel`）；**运行时感知**：非协程运行时自动降级为 `process` | Swoole 协程服务端；或 CLI/FastCGI/多进程同步运行时（自动走进程池） |
+| `process` | 进程池（per-worker 连接缓存） | 多进程环境（pcntl_fork、webman 非 Swoole 多进程、PHP-FPM） |
 | `parallel` | 并行池 | 多连接并行查询 |
-| `fiber` | 协程池 | Swoole/Fiber 协程环境 |
+| `fiber` | 协程池 | Fiber 协程环境 |
+
+> **运行时感知（重要）**：`connection` 池底层依赖 Swoole 协程 Channel。若当前运行时未加载
+> Swoole（`PoolManager::isCoroutineRuntime()` 为 `false`，如 PHP-FPM、webman 多进程、普通 CLI），
+> `PoolManager::init()` 会自动将其降级为 `process`（per-worker 连接缓存），**不会因构造期依赖 Swoole 而 Fatal**，
+> 从而使连接池在主流多进程运行时开箱可用。你也可显式指定 `poolType` 完全控制所选池型。
+> 经降级后 `PoolManager::getPoolType()` 返回实际创建的池型。
 
 ### 进程池 (ProcessPool)
 
@@ -2160,6 +2166,77 @@ $fiberConn = $pool->getFiberConnection();
 $stats = $pool->getStats();
 // ['type' => 'fiber', 'total' => 20, 'available' => 10, 'fiber_connections' => 5, 'swoole_channel' => true]
 ```
+
+### 多进程（非 Swoole）部署
+
+在 webman 多进程、PHP-FPM、普通 CLI 常驻等**未加载 Swoole** 的运行时下，无需任何特殊配置：
+`connection` 池会被 `PoolManager` 自动降级为 `process`（per-worker 连接缓存），连接按 worker 进程隔离复用。
+你也可以显式声明 `process` 以表达意图。
+
+```php
+use Kode\Database\Db\Db;
+use Kode\Database\Pool\PoolManager;
+
+// 方式一：直接声明 process 池（推荐，语义明确）
+Db::setConfig([
+    'driver'    => 'mysql',
+    'host'      => '127.0.0.1',
+    'database'  => 'test',
+    'username'  => 'root',
+    'password'  => '',
+    'charset'   => 'utf8mb4',
+    'pool'      => [
+        'type' => 'process',   // 多进程同步运行时：per-worker 连接缓存
+        'max'  => 10,
+        'min'  => 2,
+    ],
+]);
+
+// 方式二：不写 type，默认 connection —— 非 Swoole 运行时会被自动降级为 process
+Db::setConfig([
+    'driver'   => 'mysql',
+    'host'     => '127.0.0.1',
+    'database' => 'test',
+    'username' => 'root',
+    'password' => '',
+    'pool'     => ['max' => 10, 'min' => 2],
+]);
+
+// 确认实际池型（非 Swoole 下将返回 'process'）
+echo PoolManager::getPoolType(); // process
+```
+
+> 多进程环境下每个 worker 持有独立连接，`process` 池在 `fork` 后会按 PID 自动重建连接，
+> 不会跨进程共享同一 TCP 连接（避免串号/竞争）。
+
+### 作用域自动归还（RAII）
+
+对齐 webman / Hyperf「请求结束自动回收连接」体验：通过作用域对象/闭包包裹连接，
+作用域结束（或异常）时**自动归还**到池中，无需手动 `release()`。
+
+```php
+use Kode\Database\Pool\PoolManager;
+use Kode\Database\Pool\ScopedConnection;
+
+// 方式一：闭包作用域（最推荐，异常也安全）
+$rows = PoolManager::scoped(function ($conn) {
+    return $conn->select('SELECT * FROM users WHERE id = ?', [1]);
+});
+
+// 方式二：显式 ScopedConnection，离开作用域自动 __destruct 归还
+function handleRequest(): array
+{
+    $scoped = PoolManager::getScopedConnection(); // 作用域内持有
+    try {
+        return $scoped->get()->select('SELECT * FROM orders LIMIT 10');
+    } finally {
+        $scoped->release(); // 也可省略，依赖析构自动归还
+    }
+} // 即便忘记 release，对象销毁时也会归还
+```
+
+> 归还是**幂等**的：重复 `release()` 或析构多次均安全。但连接一旦归还即不可再用，
+> 仅限局部作用域内使用，不要逃逸到作用域之外。
 
 ---
 
@@ -2264,9 +2341,13 @@ src/
 │   ├── ModelEvent.php   # 事件钩子
 │   └── Observer.php     # 观察者
 ├── Pool/                # 连接池
-│   ├── ConnectionPool.php
 │   ├── PoolInterface.php
-│   └── PoolManager.php
+│   ├── PoolManager.php        # 池管理器（运行时感知 + RAII 作用域）
+│   ├── ConnectionPool.php     # Swoole 协程连接池（Channel）
+│   ├── ProcessPool.php        # 进程池（per-worker 连接缓存，无 Swoole 依赖）
+│   ├── FiberPool.php          # Fiber 协程池
+│   ├── ParallelPool.php       # 并行查询池
+│   └── ScopedConnection.php   # 作用域连接（RAII 自动归还）
 ├── Query/               # 查询构建器
 │   └── QueryBuilder.php
 └── Schema/              # 表结构

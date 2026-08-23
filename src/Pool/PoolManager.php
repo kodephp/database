@@ -6,6 +6,7 @@ namespace Kode\Database\Pool;
 
 use Kode\Database\Connection\ConnectorInterface;
 use Kode\Database\Exception\ConnectionException;
+use Kode\Database\Pool\ScopedConnection;
 
 /**
  * 连接池管理器
@@ -28,6 +29,16 @@ class PoolManager
     public static function init(array $config, string $driver = 'default', string $poolType = 'connection'): void
     {
         self::$driver = $driver;
+
+        // 运行时感知：默认 connection 池底层为 Swoole Coroutine\Channel（协程安全）。
+        // 在非协程运行时（多进程同步：webman 非 Swoole 模式、PHP-FPM、CLI 常驻等）
+        // 自动降级为「进程安全池」(ProcessPool, per-worker 连接缓存)，避免构造期 Fatal，
+        // 并使 kode/database 的连接池在主流多进程运行时可用（消除框架级 workaround）。
+        // 若需强制使用某种池型，请显式传入 poolType。
+        if ($poolType === 'connection' && !self::isCoroutineRuntime()) {
+            $poolType = 'process';
+        }
+
         self::$poolType = $poolType;
 
         self::$pools[$driver] = match ($poolType) {
@@ -36,6 +47,17 @@ class PoolManager
             'fiber' => new FiberPool($config, $driver),
             default => new ConnectionPool($config, $driver),
         };
+    }
+
+    /**
+     * 判断当前运行时是否具备协程连接池（Swoole Coroutine\Channel）能力
+     *
+     * connection 池底层依赖 Swoole Coroutine\Channel。仅当该扩展类可用时才走协程池，
+     * 否则（PHP-FPM、webman 非 Swoole 多进程、普通 CLI 等）应降级为 per-worker 进程池。
+     */
+    public static function isCoroutineRuntime(): bool
+    {
+        return class_exists(\Swoole\Coroutine\Channel::class);
     }
 
     /**
@@ -78,6 +100,43 @@ class PoolManager
         }
 
         return $pool->get();
+    }
+
+    /**
+     * 在作用域内使用连接，结束自动归还（RAII）
+     *
+     * 等价于 webman/Hyperf「请求结束自动回收连接」：回调执行完毕（含异常）后
+     * 总是把连接归还给对应池，调用方无需手动 release。
+     *
+     * @param callable(mixed $connection): mixed $callback 接收连接并返回结果
+     * @param string|null $driver 驱动名称
+     * @return mixed 回调的返回值
+     *
+     * @example
+     * $rows = PoolManager::scoped(fn($conn) => $conn->select('SELECT * FROM users'));
+     */
+    public static function scoped(callable $callback, ?string $driver = null): mixed
+    {
+        $connection = self::getConnection($driver);
+
+        try {
+            return $callback($connection);
+        } finally {
+            self::releaseConnection($connection, $driver);
+        }
+    }
+
+    /**
+     * 获取一个作用域连接对象（RAII）
+     *
+     * 返回 {@see ScopedConnection}，在局部变量离开作用域（或显式 release）时自动归还。
+     *
+     * @param string|null $driver 驱动名称
+     * @return ScopedConnection
+     */
+    public static function getScopedConnection(?string $driver = null): ScopedConnection
+    {
+        return new ScopedConnection(self::getConnection($driver), $driver);
     }
 
     /**
