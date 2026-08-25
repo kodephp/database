@@ -50,14 +50,27 @@ class PoolManager
     }
 
     /**
-     * 判断当前运行时是否具备协程连接池（Swoole Coroutine\Channel）能力
+     * 判断当前运行时是否真正处于「协程上下文」（而非仅加载了 Swoole 扩展）
      *
-     * connection 池底层依赖 Swoole Coroutine\Channel。仅当该扩展类可用时才走协程池，
-     * 否则（PHP-FPM、webman 非 Swoole 多进程、普通 CLI 等）应降级为 per-worker 进程池。
+     * connection 池底层依赖 Swoole Coroutine\Channel，仅当「当前确实处于协程上下文」时
+     * 才能安全使用。仅判断 class_exists(Swoole\Coroutine\Channel) 会在「带 Swoole 扩展的
+     * Native 运行时」（普通 CLI、PHP-FPM、webman 非协程模式等）下误判为协程，导致
+     * init() 不降级而直接构造 Swoole Channel 池，随后在非协程环境中 Fatal。
+     *
+     * 因此改用 \Swoole\Coroutine::getUid() 检测真实协程上下文：
+     * 未进入协程时返回 -1，进入协程后返回 >= 0（getCid() 语义相同，作为老版本降级）。
      */
     public static function isCoroutineRuntime(): bool
     {
-        return class_exists(\Swoole\Coroutine\Channel::class);
+        if (!class_exists(\Swoole\Coroutine::class)) {
+            return false;
+        }
+
+        $id = method_exists(\Swoole\Coroutine::class, 'getUid')
+            ? \Swoole\Coroutine::getUid()
+            : \Swoole\Coroutine::getCid();
+
+        return $id >= 0;
     }
 
     /**

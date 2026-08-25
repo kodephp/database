@@ -2092,10 +2092,15 @@ PoolManager::clear();
 | `parallel` | 并行池 | 多连接并行查询 |
 | `fiber` | 协程池 | Fiber 协程环境 |
 
-> **运行时感知（重要）**：`connection` 池底层依赖 Swoole 协程 Channel。若当前运行时未加载
-> Swoole（`PoolManager::isCoroutineRuntime()` 为 `false`，如 PHP-FPM、webman 多进程、普通 CLI），
-> `PoolManager::init()` 会自动将其降级为 `process`（per-worker 连接缓存），**不会因构造期依赖 Swoole 而 Fatal**，
-> 从而使连接池在主流多进程运行时开箱可用。你也可显式指定 `poolType` 完全控制所选池型。
+> **运行时感知（重要）**：`connection` 池底层依赖 Swoole 协程 Channel，仅当**当前确实处于协程上下文**
+> 时才能安全使用。`PoolManager::isCoroutineRuntime()` 检测的是**真实协程上下文**（`\Swoole\Coroutine::getUid() >= 0`），
+> 而非「仅加载了 Swoole 扩展」—— 否则在「带 Swoole 扩展的 Native 运行时」（如带 Swoole 的普通 CLI、
+> 未进入协程的常驻进程）会被误判为协程，进而直接构造 Swoole Channel 池导致 Fatal。
+>
+> 因此，只要 `isCoroutineRuntime()` 为 `false`（未加载 Swoole，或加载了但不在协程上下文，如 PHP-FPM、
+> webman 多进程、普通 CLI、`Co\run` 之外），`PoolManager::init()` 都会自动把 `connection` 降级为 `process`
+> （per-worker 连接缓存），**不会因构造期依赖 Swoole 而 Fatal**，从而使连接池在主流多进程运行时开箱可用；
+> 框架也无需再用自有 `ConnectionPool` 规避。你也可显式指定 `poolType` 完全控制所选池型。
 > 经降级后 `PoolManager::getPoolType()` 返回实际创建的池型。
 
 ### 进程池 (ProcessPool)
@@ -2168,11 +2173,11 @@ $stats = $pool->getStats();
 // ['type' => 'fiber', 'total' => 20, 'available' => 10, 'fiber_connections' => 5, 'swoole_channel' => true]
 ```
 
-### 多进程（非 Swoole）部署
+### 多进程（非协程）部署
 
-在 webman 多进程、PHP-FPM、普通 CLI 常驻等**未加载 Swoole** 的运行时下，无需任何特殊配置：
-`connection` 池会被 `PoolManager` 自动降级为 `process`（per-worker 连接缓存），连接按 worker 进程隔离复用。
-你也可以显式声明 `process` 以表达意图。
+在 webman 多进程、PHP-FPM、普通 CLI 常驻等**未处于协程上下文**的运行时下（无论是否加载了 Swoole 扩展），
+无需任何特殊配置：`connection` 池会被 `PoolManager` 自动降级为 `process`（per-worker 连接缓存），
+连接按 worker 进程隔离复用。你也可以显式声明 `process` 以表达意图。
 
 ```php
 use Kode\Database\Db\Db;
@@ -2203,7 +2208,7 @@ Db::setConfig([
     'pool'     => ['max' => 10, 'min' => 2],
 ]);
 
-// 确认实际池型（非 Swoole 下将返回 'process'）
+// 确认实际池型（非协程上下文下将返回 'process'）
 echo PoolManager::getPoolType(); // process
 ```
 
