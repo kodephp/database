@@ -277,7 +277,9 @@ class PdoConnection implements ExecutorInterface
     public function isConnected(): bool
     {
         if ($this->pdo === null) {
-            return false;
+            // 惰性连接（尚未建立 PDO）视为可用，避免池化场景下 fresh 连接被误判为失效而丢弃
+            // 真正失效会在 query 时通过 PDOException 暴露并触发重连
+            return true;
         }
 
         try {

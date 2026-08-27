@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Kode\Database\Pool;
 
 use Kode\Database\Connection\ConnectorInterface;
+use Kode\Database\Exception\ConnectionException;
 
 /**
  * 进程池连接管理器
@@ -20,6 +21,10 @@ class ProcessPool implements PoolInterface
     protected int $maxWaitTime = 30;
     protected bool $initialized = false;
     protected int $processId;
+    /** @var array<int, callable> 等待队列：连接释放时的回调 */
+    protected array $waitQueue = [];
+    /** @var int 当前使用中的连接数（含从池取出未归还 + 直接创建的） */
+    protected int $inUseCount = 0;
 
     public function __construct(array $config, string $driver = 'default')
     {
@@ -63,7 +68,7 @@ class ProcessPool implements PoolInterface
     }
 
     /**
-     * 获取连接（进程安全）
+     * 获取连接（进程安全，支持 max_wait_time 等待）
      */
     public function get(): mixed
     {
@@ -72,15 +77,36 @@ class ProcessPool implements PoolInterface
         if ($currentPid !== $this->processId) {
             $this->processId = $currentPid;
             $this->processConnections = [];
+            $this->inUseCount = 0;
+            $this->waitQueue = [];
             $this->initialize();
         }
 
+        // 有空闲连接，直接取用
         if (!empty($this->processConnections)) {
+            $this->inUseCount++;
             return array_pop($this->processConnections);
         }
 
-        $connection = $this->connector->connect($this->config);
-        return $connection;
+        // 未达上限，直接创建新连接
+        if ($this->inUseCount < $this->maxConnections) {
+            $this->inUseCount++;
+            return $this->connector->connect($this->config);
+        }
+
+        // 达到上限，进入等待队列轮询等待
+        $startTime = microtime(true);
+        while (microtime(true) - $startTime < $this->maxWaitTime) {
+            // 检查是否有连接被释放回池
+            if (!empty($this->processConnections)) {
+                $this->inUseCount++;
+                return array_pop($this->processConnections);
+            }
+            // 短暂休眠避免空转，10ms 轮询一次
+            usleep(10000);
+        }
+
+        throw ConnectionException::make('ProcessPool', '获取连接超时（已达最大连接数 ' . $this->maxConnections . '，等待 ' . $this->maxWaitTime . 's）');
     }
 
     /**
@@ -90,6 +116,11 @@ class ProcessPool implements PoolInterface
     {
         if ($connection === null) {
             return;
+        }
+
+        // 减少使用计数
+        if ($this->inUseCount > 0) {
+            $this->inUseCount--;
         }
 
         $currentPid = getmypid();
@@ -137,7 +168,7 @@ class ProcessPool implements PoolInterface
             'type' => 'process',
             'total' => $this->maxConnections,
             'available' => count($this->processConnections),
-            'in_use' => 0,
+            'in_use' => $this->inUseCount,
             'min' => $this->minConnections,
             'max' => $this->maxConnections,
             'process_id' => $this->processId,

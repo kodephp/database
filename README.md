@@ -2167,22 +2167,29 @@ echo PoolManager::getPoolType('slave'); // single
 
 ### 进程池 (ProcessPool)
 
+`ProcessPool` 与 `ConnectionPool` 在 **非 Swoole / Native** 分支下已支持 `max_wait_time` 等待队列（对齐 Swoole `Channel::pop(maxWaitTime)` 语义）：当 `in_use >= max` 时不再直接抛 `连接池已满`，而是在 `max_wait_time`（默认 `30s`，可配 `pool.max_wait_time`）内以 `10ms` 轮询等待连接归还，超时后才抛 `ConnectionException`。突发 `c200` 场景建议调大 `pool.max` 或开启 `DB_POOL_ENABLED=true` 并配合 `process`/`connection` 池。
+
 ```php
 use Kode\Database\Pool\ProcessPool;
 
 $pool = new ProcessPool($config, 'default');
 
-// 进程安全获取连接
+// 进程安全获取连接（达到 max 时会等待 max_wait_time 内的归还）
 $pid = getmypid();
-$connection = $pool->get();  // fork 后自动重建
+$connection = $pool->get();  // 达到上限时会阻塞等待（10ms 轮询），超时抛异常
+// fork 后自动重建
 
 // 归还连接
 $pool->release($connection);
 
-// 获取统计
+// 获取统计（in_use 为真实持有数，支持 wait queue）
 $stats = $pool->getStats();
-// ['type' => 'process', 'total' => 10, 'available' => 5, 'process_id' => 1234]
+// ['type' => 'process', 'total' => 10, 'available' => 5, 'in_use' => 2, 'process_id' => 1234]
 ```
+
+> **Native 突发说明**：PHP-FPM / CLI 同步模式下，单进程内并发受 `max` 限制。未配置池时会自动退化为 `single`（单例复用）；已启用池但 `max` 过小且并发突增（如 `c200`）会在 `max_wait_time` 内排队，超时后快速失败。此时应增大 `pool.max`（如 `32/64`）或确保 `pool.enabled` 为真。
+
+**空闲回收**：`ConnectionPool` 的 `max_idle_time` 默认已从 `3600s` 调整为 `300s`（5 分钟，可配 `pool.max_idle_time`），并在 Swoole 环境下通过 `Swoole\Timer::tick(60000)` 每 `60s` 定时 `cleanup()`，及时回收失效/空闲连接，避免长连接探活滞后。
 
 ### 并行池 (ParallelPool)
 
