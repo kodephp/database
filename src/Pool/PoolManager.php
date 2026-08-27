@@ -18,17 +18,48 @@ class PoolManager
     protected static array $contextPools = [];
     protected static ?string $driver = 'default';
     protected static string $poolType = 'connection';
+    protected static array $poolTypes = [];
 
     /**
      * 初始化连接池
      *
      * @param array $config 数据库配置
      * @param string $driver 驱动名称
-     * @param string $poolType 池类型：connection|process|parallel|fiber
+     * @param string $poolType 池类型：connection|process|parallel|fiber|single
      */
     public static function init(array $config, string $driver = 'default', string $poolType = 'connection'): void
     {
         self::$driver = $driver;
+
+        // 单连接退化池不受协程运行时影响，无需 Swoole Channel
+        if ($poolType === 'single') {
+            self::$poolType = $poolType;
+            self::$poolTypes[$driver] = $poolType;
+            self::$pools[$driver] = new SingleConnectionPool($config, $driver);
+            return;
+        }
+
+        // 若配置未启用池化（pool 为空 / false / enabled=false），自动退化为单连接池
+        if (!self::isPoolEnabled($config) && $poolType === 'connection') {
+            $explicitType = $config['pool']['type'] ?? null;
+            if ($explicitType === 'single' || !self::isPoolEnabled($config)) {
+                self::$poolType = 'single';
+                self::$poolTypes[$driver] = 'single';
+                self::$pools[$driver] = new SingleConnectionPool($config, $driver);
+                return;
+            }
+        }
+
+        // 允许通过 pool.type 显式指定池类型
+        if (isset($config['pool']['type']) && self::supports((string) $config['pool']['type'])) {
+            $poolType = (string) $config['pool']['type'];
+            if ($poolType === 'single') {
+                self::$poolType = $poolType;
+                self::$poolTypes[$driver] = $poolType;
+                self::$pools[$driver] = new SingleConnectionPool($config, $driver);
+                return;
+            }
+        }
 
         // 运行时感知：默认 connection 池底层为 Swoole Coroutine\Channel（协程安全）。
         // 在非协程运行时（多进程同步：webman 非 Swoole 模式、PHP-FPM、CLI 常驻等）
@@ -40,13 +71,55 @@ class PoolManager
         }
 
         self::$poolType = $poolType;
+        self::$poolTypes[$driver] = $poolType;
 
         self::$pools[$driver] = match ($poolType) {
             'process' => new ProcessPool($config, $driver),
             'parallel' => new ParallelPool($config, $driver),
             'fiber' => new FiberPool($config, $driver),
+            'single' => new SingleConnectionPool($config, $driver),
             default => new ConnectionPool($config, $driver),
         };
+    }
+
+    /**
+     * 判断配置是否启用连接池
+     *
+     * 无池时应退化为单连接（SingleConnectionPool），而不是抛出“连接池未初始化”。
+     * 判定规则：
+     *  - 未设置 pool / pool 为 false/null/0/''/[]  => 未启用
+     *  - pool 为 true => 启用（使用默认连接池）
+     *  - pool 为数组且 enabled===false => 未启用
+     *  - pool 为数组且为空 => 未启用
+     *  - 其它数组（包含 max/min 等）=> 启用
+     */
+    public static function isPoolEnabled(array $config): bool
+    {
+        if (!array_key_exists('pool', $config)) {
+            return false;
+        }
+
+        $pool = $config['pool'];
+
+        if ($pool === false || $pool === null || $pool === 0 || $pool === '') {
+            return false;
+        }
+
+        if ($pool === true) {
+            return true;
+        }
+
+        if (is_array($pool)) {
+            if (array_key_exists('enabled', $pool) && !$pool['enabled']) {
+                return false;
+            }
+            if (empty($pool)) {
+                return false;
+            }
+            return true;
+        }
+
+        return (bool) $pool;
     }
 
     /**
@@ -75,16 +148,49 @@ class PoolManager
 
     /**
      * 获取连接池
+     *
+     * 无池时自动退化为单连接池（SingleConnectionPool），避免调用方因未初始化而异常。
+     * 退化所需配置优先从 Db 获取（若已初始化），否则以空配置创建单连接池（连接时再报错）。
      */
     public static function getPool(?string $driver = null): PoolInterface
     {
         $driver = $driver ?? self::$driver;
 
         if (!isset(self::$pools[$driver])) {
+            // 尝试无池退化：若 Db 已持有该连接对应配置且该配置未启用池，则自动创建单连接池兜底
+            // 避免对未知连接名误用默认配置退化而掩盖“未初始化”错误
+            if (class_exists(\Kode\Database\Db\Db::class)) {
+                try {
+                    $connections = \Kode\Database\Db\Db::getConnections();
+                    $defaultConfig = \Kode\Database\Db\Db::getConfig();
+                    $hasExplicit = isset($connections[$driver]);
+                    $isDefaultDriver = $driver === ($defaultConfig['driver'] ?? null) || $driver === \Kode\Database\Db\Db::getDefaultConnection();
+                    // 仅当该 driver 有显式配置，或是默认连接对应池键时，才允许用对应配置退化
+                    if ($hasExplicit || $isDefaultDriver) {
+                        $config = \Kode\Database\Db\Db::getConfig($driver);
+                        if (!empty($config) && !self::isPoolEnabled($config)) {
+                            self::$pools[$driver] = new SingleConnectionPool($config, $driver);
+                            self::$poolTypes[$driver] = 'single';
+                            return self::$pools[$driver];
+                        }
+                    }
+                } catch (\Throwable) {
+                }
+            }
+
             throw ConnectionException::make($driver, "连接池未初始化: {$driver}");
         }
 
         return self::$pools[$driver];
+    }
+
+    /**
+     * 是否已初始化指定驱动的池（含单连接池）
+     */
+    public static function hasPool(?string $driver = null): bool
+    {
+        $driver = $driver ?? self::$driver;
+        return isset(self::$pools[$driver]);
     }
 
     /**
@@ -264,6 +370,9 @@ class PoolManager
      */
     public static function getPoolType(?string $driver = null): string
     {
+        if ($driver !== null && isset(self::$poolTypes[$driver])) {
+            return self::$poolTypes[$driver];
+        }
         return self::$poolType;
     }
 
@@ -272,7 +381,7 @@ class PoolManager
      */
     public static function supports(string $poolType): bool
     {
-        return in_array($poolType, ['connection', 'process', 'parallel', 'fiber'], true);
+        return in_array($poolType, ['connection', 'process', 'parallel', 'fiber', 'single'], true);
     }
 
     /**
@@ -287,6 +396,7 @@ class PoolManager
         }
 
         self::$pools = [];
+        self::$poolTypes = [];
         self::$contextPools = [];
     }
 }

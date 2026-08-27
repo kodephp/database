@@ -9,7 +9,7 @@
 - **全 ORM 支持**：一对一、一对多、多对多、多态关联、预加载
 - **多数据库支持**：主从、读写分离自动路由、跨库关联查询
 - **分库分表**：按年月、按哈希、按后缀、范围映射、自动路由
-- **连接池管理**：协程上下文隔离，支持 Fiber
+- **连接池管理**：协程上下文隔离，支持 Fiber；无池时自动退化为单连接（`single`），零配置也能保证事务原子性
 - **常驻内存优化**：内置 PDO 执行器支持预编译语句缓存（上限 256，按 SQL 文本复用 PDOStatement）、惰性断连重试（失效由 PDOException 暴露、捕获后重连重试一次）、免去每查一次 SELECT 1 探活，显著降低常驻内存场景下的 DB 往返
 - **事件监听**：SQL 监听、事务事件、模型事件钩子
 - **Schema 定义**：表结构构建器
@@ -42,7 +42,7 @@ composer require kode/database
 ```php
 use Kode\Database\Db\Db;
 
-// 初始化默认连接
+// 初始化默认连接（启用连接池）
 Db::setConfig([
     'driver' => 'mysql',
     'host' => '127.0.0.1',
@@ -51,6 +51,26 @@ Db::setConfig([
     'username' => 'root',
     'password' => '',
     'pool' => ['max' => 10, 'min' => 2]
+]);
+
+// 无池时自动退化为单连接（single），无需任何 pool 配置也能使用，事务自动复用同一连接
+Db::setConfig([
+    'driver' => 'mysql',
+    'host' => '127.0.0.1',
+    'database' => 'main_db',
+    'username' => 'root',
+    'password' => '',
+    // 不写 pool 或 pool => false / [] / ['enabled' => false] 均会退化
+]);
+
+// 显式指定单连接池
+Db::setConfig([
+    'driver' => 'mysql',
+    'host' => '127.0.0.1',
+    'database' => 'main_db',
+    'username' => 'root',
+    'password' => '',
+    'pool' => ['type' => 'single'],
 ]);
 ```
 
@@ -2040,10 +2060,11 @@ use Kode\Database\Pool\PoolManager;
 PoolManager::init($config, 'default');
 
 // 初始化不同类型的连接池
-PoolManager::init($config, 'default', 'connection');  // 普通连接池
+PoolManager::init($config, 'default', 'connection');  // 普通连接池（协程感知，非协程自动降级 process）
 PoolManager::init($config, 'default', 'process');    // 进程池
 PoolManager::init($config, 'default', 'parallel');  // 并行池
 PoolManager::init($config, 'default', 'fiber');      // 协程池
+PoolManager::init($config, 'default', 'single');     // 单连接退化池（无池时自动使用）
 
 // 获取连接池
 $pool = PoolManager::getPool();
@@ -2054,10 +2075,16 @@ print_r($stats);
 // 输出: ['type' => 'connection', 'total' => 10, 'available' => 5, 'in_use' => 5, ...]
 
 // 获取连接池类型
-$type = PoolManager::getPoolType();  // 返回: connection|process|parallel|fiber
+$type = PoolManager::getPoolType();  // 返回: connection|process|parallel|fiber|single
+echo $type; // 未配置 pool 时返回 single（退化）
 
 // 检查是否支持指定池类型
-$supports = PoolManager::supports('fiber');  // true
+$supports = PoolManager::supports('single');  // true
+$supports = PoolManager::supports('fiber');   // true
+
+// 判断配置是否启用池化
+$enabled = PoolManager::isPoolEnabled($config); // false => 将退化为 single
+$hasPool = PoolManager::hasPool('default');     // 是否已初始化（含 single）
 
 // 执行并行查询
 $results = PoolManager::parallelExecute([
@@ -2091,6 +2118,7 @@ PoolManager::clear();
 | `process` | 进程池（per-worker 连接缓存） | 多进程环境（pcntl_fork、webman 非 Swoole 多进程、PHP-FPM） |
 | `parallel` | 并行池 | 多连接并行查询 |
 | `fiber` | 协程池 | Fiber 协程环境 |
+| `single` | 单连接退化池（始终复用同一连接，`release` 为空操作） | **无池时自动退化**：未配置 `pool` / `pool=false` / `pool=[]` / `pool.enabled=false` 或显式 `pool.type=single`；适合传统 PHP-FPM/CLI、事务原子性要求但无需池化的场景 |
 
 > **运行时感知（重要）**：`connection` 池底层依赖 Swoole 协程 Channel，仅当**当前确实处于协程上下文**
 > 时才能安全使用。`PoolManager::isCoroutineRuntime()` 检测的是**真实协程上下文**（`\Swoole\Coroutine::getUid() >= 0`），
@@ -2102,6 +2130,40 @@ PoolManager::clear();
 > （per-worker 连接缓存），**不会因构造期依赖 Swoole 而 Fatal**，从而使连接池在主流多进程运行时开箱可用；
 > 框架也无需再用自有 `ConnectionPool` 规避。你也可显式指定 `poolType` 完全控制所选池型。
 > 经降级后 `PoolManager::getPoolType()` 返回实际创建的池型。
+
+### 单连接退化池 (SingleConnectionPool) — 无池时自动兜底
+
+无池（`pool` 未配置 / `false` / `[]` / `['enabled'=>false]`）或显式 `pool.type=single` 时，`PoolManager` 与 `Db` 会自动创建 `SingleConnectionPool`：
+- 始终复用同一底层连接（`PdoConnection` 等 `Executor`），避免每次查询新建连接，保证 `beginTransaction`/`commit` 在同一 PDO 上执行，事务原子性与 `Db::$connectionCache` 一致；
+- `get()` 惰性复用，底层 PDO 的断线由 `PdoConnection` 自身重试修复，无需每次 `isConnected()` 探活；
+- `release()` 为空操作（单例保留），`close()` 时统一断开；`getStats()` 返回 `type=single, total=1`；
+- 对调用方透明：`PoolManager::getConnection()` / `Db::getConnection()` / `Db::table()` 等均无需判空，`PoolManager::getPoolType()` 返回 `single`，`supports('single')===true`；
+- 多库场景按连接名隔离单例（`slave` 与 `default` 各持一个单例，不串库）；跨库 `useDatabase()` 场景会创建独立连接避免污染单例库名；
+- 适用：传统同步 PHP（FPM/CLI）、无需池化的中小流量、期望零配置即得事务保障的业务。
+
+```php
+use Kode\Database\Db\Db;
+use Kode\Database\Pool\PoolManager;
+
+// 零配置即退化（推荐）
+Db::setConfig(['driver'=>'sqlite','database'=>':memory:']); // 或 mysql/pgsql/... 均可
+echo PoolManager::getPoolType('sqlite'); // single
+$conn1 = Db::getConnection(); $conn2 = Db::getConnection();
+var_dump($conn1 === $conn2); // true — 同一单例
+
+// 禁用池化
+Db::setConfig(['driver'=>'mysql','host'=>'127.0.0.1','database'=>'app','pool'=>['enabled'=>false]]);
+echo PoolManager::getPoolType(); // single
+
+// 显式单连接
+Db::setConfig(['driver'=>'mysql','host'=>'127.0.0.1','database'=>'app','pool'=>['type'=>'single']]);
+
+// 多库各自单例
+Db::addConnection('slave', ['driver'=>'mysql','host'=>'127.0.0.2','database'=>'app']);
+echo PoolManager::getPoolType('slave'); // single
+```
+
+> `Db::beginTransaction()` 在单例/池化环境下均会持有同一连接直至 `commit`/`rollback` 后归还，确保事务内所有查询可见未提交写入；常驻进程请每请求结束调用 `Db::disconnect()` 清理。
 
 ### 进程池 (ProcessPool)
 
@@ -2358,7 +2420,8 @@ src/
 │   └── Observer.php     # 观察者
 ├── Pool/                # 连接池
 │   ├── PoolInterface.php
-│   ├── PoolManager.php        # 池管理器（运行时感知 + RAII 作用域）
+│   ├── PoolManager.php        # 池管理器（运行时感知 + RAII 作用域，支持 single 退化）
+│   ├── SingleConnectionPool.php # 单连接退化池（无池时兜底，单例复用）
 │   ├── ConnectionPool.php     # Swoole 协程连接池（Channel）
 │   ├── ProcessPool.php        # 进程池（per-worker 连接缓存，无 Swoole 依赖）
 │   ├── FiberPool.php          # Fiber 协程池

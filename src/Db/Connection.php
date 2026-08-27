@@ -483,9 +483,18 @@ class Connection
                 return $this->connection;
             }
 
-            if (!empty($config['pool'])) {
+            if (PoolManager::isPoolEnabled($config) && PoolManager::hasPool($this->name)) {
                 $connection = PoolManager::getConnection($this->name);
+            } elseif (PoolManager::isPoolEnabled($config)) {
+                // 池已启用但尚未 hasPool（罕见），尝试懒获取，失败则回退直连
+                try {
+                    $connection = PoolManager::getConnection($this->name);
+                } catch (\Throwable) {
+                    $factory = new \Kode\Database\Connection\ConnectionFactory();
+                    $connection = $factory->make($config);
+                }
             } else {
+                // 无池退化：跨库场景需独立连接，避免污染单例的库名，故直连（不走单例池共享）
                 $factory = new \Kode\Database\Connection\ConnectionFactory();
                 $connection = $factory->make($config);
             }

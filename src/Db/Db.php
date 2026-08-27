@@ -46,6 +46,17 @@ class Db
     protected static int $transactionDepth = 0;
 
     /**
+     * 事务期间持有的连接（按连接名），保证同一事务内所有查询复用同一底层连接
+     *
+     * 对于 SingleConnectionPool 单例池本身已复用同一连接，无需此缓存也能保证原子性；
+     * 但对于真实连接池（ProcessPool/ConnectionPool/ParallelPool），每次 getConnection
+     * 会分配新连接，若不缓存会导致 begin/commit/insert 走不同连接而破坏事务。
+     *
+     * @var array<string, mixed>
+     */
+    protected static array $transactionConnections = [];
+
+    /**
      * 初始化默认配置
      *
      * @param array<string, mixed>|\Kode\Database\Config\DatabaseConfig $config
@@ -59,8 +70,13 @@ class Db
         self::$config = $config;
         self::$factory = new ConnectionFactory();
 
-        if (isset($config['pool'])) {
-            PoolManager::init($config, $config['driver'] ?? self::$defaultConnection);
+        $driverKey = $config['driver'] ?? self::$defaultConnection;
+        if (PoolManager::isPoolEnabled($config)) {
+            $poolType = is_array($config['pool']) ? ($config['pool']['type'] ?? 'connection') : 'connection';
+            PoolManager::init($config, $driverKey, $poolType);
+        } else {
+            // 无池时退化为单连接池，保证 PoolManager::getConnection 不抛“未初始化”错误
+            PoolManager::init($config, $driverKey, 'single');
         }
     }
 
@@ -144,8 +160,12 @@ class Db
     {
         self::$connections[$name] = $config;
 
-        if (isset($config['pool'])) {
-            PoolManager::init($config, $name);
+        if (PoolManager::isPoolEnabled($config)) {
+            $poolType = is_array($config['pool']) ? ($config['pool']['type'] ?? 'connection') : 'connection';
+            PoolManager::init($config, $name, $poolType);
+        } else {
+            // 无池时退化为单连接池
+            PoolManager::init($config, $name, 'single');
         }
     }
 
@@ -290,11 +310,28 @@ class Db
     }
 
     /**
-     * 开启事务
+     * 开启事务（事务期间持有同一连接，保证池化/单例环境下的原子性）
      */
     public static function beginTransaction(): void
     {
+        // 嵌套事务：沿用已持有的连接，递增层级即可（底层 Executor 自行处理 savepoint/计数）
+        if (self::$transactionDepth > 0 && !empty(self::$transactionConnections)) {
+            $conn = self::$transactionConnections[self::$defaultConnection]
+                ?? self::$transactionConnections[self::$config['driver'] ?? ''] ?? null;
+            if ($conn !== null) {
+                $conn->beginTransaction();
+                self::$transactionDepth++;
+                return;
+            }
+        }
+
         $connection = self::getWriteConnection();
+        $name = self::$defaultConnection;
+        $driverKey = self::$config['driver'] ?? null;
+        self::$transactionConnections[$name] = $connection;
+        if ($driverKey !== null && $driverKey !== $name) {
+            self::$transactionConnections[$driverKey] = $connection;
+        }
         $connection->beginTransaction();
         self::$transactionDepth++;
     }
@@ -304,9 +341,37 @@ class Db
      */
     public static function commit(): void
     {
-        $connection = self::getWriteConnection();
+        $name = self::$defaultConnection;
+        $driverKey = self::$config['driver'] ?? null;
+        $connection = self::$transactionConnections[$name]
+            ?? ($driverKey !== null ? self::$transactionConnections[$driverKey] ?? null : null);
+
+        if ($connection === null) {
+            $connection = self::getWriteConnection();
+        }
+
         $connection->commit();
         self::$transactionDepth = max(0, self::$transactionDepth - 1);
+
+        if (self::$transactionDepth === 0 && !empty(self::$transactionConnections)) {
+            $releaseKey = null;
+            if ($name !== null && PoolManager::hasPool($name)) {
+                $releaseKey = $name;
+            } elseif ($driverKey !== null && PoolManager::hasPool($driverKey)) {
+                $releaseKey = $driverKey;
+            } elseif (isset(self::$transactionConnections[$name])) {
+                $releaseKey = $name;
+            } else {
+                $releaseKey = $driverKey;
+            }
+            if ($releaseKey !== null) {
+                try {
+                    PoolManager::releaseConnection($connection, $releaseKey);
+                } catch (\Throwable) {
+                }
+            }
+            self::$transactionConnections = [];
+        }
     }
 
     /**
@@ -314,9 +379,37 @@ class Db
      */
     public static function rollback(): void
     {
-        $connection = self::getWriteConnection();
+        $name = self::$defaultConnection;
+        $driverKey = self::$config['driver'] ?? null;
+        $connection = self::$transactionConnections[$name]
+            ?? ($driverKey !== null ? self::$transactionConnections[$driverKey] ?? null : null);
+
+        if ($connection === null) {
+            $connection = self::getWriteConnection();
+        }
+
         $connection->rollBack();
         self::$transactionDepth = max(0, self::$transactionDepth - 1);
+
+        if (self::$transactionDepth === 0 && !empty(self::$transactionConnections)) {
+            $releaseKey = null;
+            if ($name !== null && PoolManager::hasPool($name)) {
+                $releaseKey = $name;
+            } elseif ($driverKey !== null && PoolManager::hasPool($driverKey)) {
+                $releaseKey = $driverKey;
+            } elseif (isset(self::$transactionConnections[$name])) {
+                $releaseKey = $name;
+            } else {
+                $releaseKey = $driverKey;
+            }
+            if ($releaseKey !== null) {
+                try {
+                    PoolManager::releaseConnection($connection, $releaseKey);
+                } catch (\Throwable) {
+                }
+            }
+            self::$transactionConnections = [];
+        }
     }
 
     /**
@@ -362,22 +455,55 @@ class Db
     }
 
     /**
-     * 获取连接
+     * 获取连接（无池时退化单连接）
+     *
+     * 统一入口：
+     *  - 若 PoolManager 已注册对应池（含 single 单连接退化池），优先走池，保证事务/上下文复用同一连接
+     *  - 否则尝试 PoolManager 懒退化（无池配置自动创建 SingleConnectionPool）
+     *  - 极端兜底才走本地 connectionCache / 直连
      */
     public static function getConnection(?string $name = null): mixed
     {
         $name = $name ?? self::$defaultConnection;
+        $driverKey = self::$config['driver'] ?? null;
 
-        if (!empty(self::$connections[$name]['pool'])) {
+        // 事务期间复用已持有的连接，保证原子性（对真实池尤为重要，单例池本身已复用）
+        if (self::$transactionDepth > 0) {
+            if (isset(self::$transactionConnections[$name])) {
+                return self::$transactionConnections[$name];
+            }
+            if ($name === self::$defaultConnection && $driverKey !== null && isset(self::$transactionConnections[$driverKey])) {
+                return self::$transactionConnections[$driverKey];
+            }
+        }
+
+        // 1) 快速命中已注册池（含 single）
+        if (PoolManager::hasPool($name)) {
             return PoolManager::getConnection($name);
         }
-
-        if (!empty(self::$config['pool'])) {
-            return PoolManager::getConnection(self::$config['driver'] ?? $name);
+        if ($name === self::$defaultConnection && $driverKey !== null && PoolManager::hasPool($driverKey)) {
+            return PoolManager::getConnection($driverKey);
         }
 
+        // 2) 尝试 PoolManager 懒获取（无池时会在 getPool 内自动创建 SingleConnectionPool）
+        $candidates = [$name];
+        if ($name === self::$defaultConnection && $driverKey !== null && $driverKey !== $name) {
+            $candidates[] = $driverKey;
+        }
+        foreach ($candidates as $candidate) {
+            try {
+                return PoolManager::getConnection($candidate);
+            } catch (\Throwable) {
+                // 未初始化或池缺失，继续尝试下一候选或回退到直连
+            }
+        }
+
+        // 3) 兜底：本地单连接缓存（兼容极端未初始化场景）
         if (isset(self::$connectionCache[$name])) {
             return self::$connectionCache[$name];
+        }
+        if ($driverKey !== null && $name === self::$defaultConnection && isset(self::$connectionCache[$driverKey])) {
+            return self::$connectionCache[$driverKey];
         }
 
         if (self::$factory === null) {
@@ -399,6 +525,27 @@ class Db
      */
     public static function disconnect(): void
     {
+        // 清理事务持有的连接（若有未提交事务，尝试回滚后释放）
+        foreach (self::$transactionConnections as $conn) {
+            try {
+                if (method_exists($conn, 'rollBack')) {
+                    // 仅在事务深度>0时尝试回滚，避免误操作
+                    if (self::$transactionDepth > 0) {
+                        $conn->rollBack();
+                    }
+                }
+            } catch (\Throwable) {
+            }
+            try {
+                if (method_exists($conn, 'disconnect')) {
+                    $conn->disconnect();
+                }
+            } catch (\Throwable) {
+            }
+        }
+        self::$transactionConnections = [];
+        self::$transactionDepth = 0;
+
         foreach (self::$connectionCache as $connection) {
             if (method_exists($connection, 'disconnect')) {
                 $connection->disconnect();
