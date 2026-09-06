@@ -33,6 +33,12 @@ class Column
 
     public function toSql(): string
     {
+        // SQLite 自增列必须是严格形态 `INTEGER PRIMARY KEY AUTOINCREMENT`
+        //（类型名须为 INTEGER 且顺序固定），此处整体特判，避免通用拼接产出非法 DDL。
+        if (($this->options['auto_increment'] ?? false) && $this->driver === 'sqlite') {
+            return "{$this->name} INTEGER PRIMARY KEY AUTOINCREMENT";
+        }
+
         $sql = "{$this->name} {$this->buildType()}";
 
         // UNSIGNED 仅在 MySQL 语义下有效
