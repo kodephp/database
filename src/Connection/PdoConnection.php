@@ -245,8 +245,16 @@ class PdoConnection implements ExecutorInterface
     #[\Override]
     public function beginTransaction(): void
     {
+        // 若上一级事务被数据库隐式提交（例如 PostgreSQL 执行 DDL 后会强制提交当前事务），
+        // PDO 侧 inTransaction() 已为 false 但 $this->transactionLevel 未回落到 0，
+        // 此时继续递增 level 会导致后续 rollBack 在错误的层级被跳过，实际事务已断。
+        // 先做一致性校验：level 与 PDO 实际状态不一致时，重置 level 再开启新事务。
+        $pdo = $this->ensureConnected();
+        if ($this->transactionLevel > 0 && !$pdo->inTransaction()) {
+            $this->transactionLevel = 0;
+        }
         if ($this->transactionLevel === 0) {
-            $this->ensureConnected()->beginTransaction();
+            $pdo->beginTransaction();
         }
         $this->transactionLevel++;
     }
@@ -257,7 +265,7 @@ class PdoConnection implements ExecutorInterface
         if ($this->transactionLevel > 0) {
             $this->transactionLevel--;
         }
-        if ($this->transactionLevel === 0 && $this->pdo !== null) {
+        if ($this->transactionLevel === 0 && $this->pdo !== null && $this->pdo->inTransaction()) {
             $this->pdo->commit();
         }
     }
@@ -265,10 +273,12 @@ class PdoConnection implements ExecutorInterface
     #[\Override]
     public function rollBack(): void
     {
+        // 与 commit 对称：以 PDO 实际状态为准，避免上层误以为事务开启但底层已中断
+        // 时，直接 PDO::rollBack() 抛 "There is no active transaction"。
         if ($this->transactionLevel > 0) {
             $this->transactionLevel--;
         }
-        if ($this->transactionLevel === 0 && $this->pdo !== null) {
+        if ($this->transactionLevel === 0 && $this->pdo !== null && $this->pdo->inTransaction()) {
             $this->pdo->rollBack();
         }
     }

@@ -275,13 +275,16 @@ class Schema
     /**
      * 唯一索引
      *
-     * @param array|string $columns 字段名
+     * 兼容 Laravel 链式写法：`$t->string('name')->unique()` 或 `->uniqueKey()` 无参调用时，
+     * 自动取上一列字段名作为索引目标列。
+     *
+     * @param array|string|null $columns 字段名（缺省取最近一列）
      * @param string|null $name 索引名
      * @return $this
      */
-    public function uniqueKey(array|string $columns, ?string $name = null): static
+    public function uniqueKey(array|string|null $columns = null, ?string $name = null): static
     {
-        $columns = is_array($columns) ? $columns : [$columns];
+        $columns = $this->normalizeColumns($columns);
         $this->indexes[] = [
             'type' => 'UNIQUE',
             'name' => $name,
@@ -293,19 +296,39 @@ class Schema
     /**
      * 普通索引
      *
-     * @param array|string $columns 字段名
+     * 兼容 Laravel 链式写法：`$t->string('name')->index()` 无参调用时，
+     * 自动取上一列字段名作为索引目标列。
+     *
+     * @param array|string|null $columns 字段名（缺省取最近一列）
      * @param string|null $name 索引名
      * @return $this
      */
-    public function index(array|string $columns, ?string $name = null): static
+    public function index(array|string|null $columns = null, ?string $name = null): static
     {
-        $columns = is_array($columns) ? $columns : [$columns];
+        $columns = $this->normalizeColumns($columns);
         $this->indexes[] = [
             'type' => 'INDEX',
             'name' => $name,
             'columns' => $columns,
         ];
         return $this;
+    }
+
+    /**
+     * 归一化索引列参数：null → 取最近一列，字符串 → 单元素数组，数组原样返回。
+     *
+     * @return string[]
+     */
+    private function normalizeColumns(array|string|null $columns): array
+    {
+        if ($columns === null) {
+            if ($this->columns === []) {
+                throw new \LogicException('索引列缺省时必须已定义至少一列');
+            }
+            $last = end($this->columns);
+            return [(string) $last->getName()];
+        }
+        return is_array($columns) ? $columns : [$columns];
     }
 
     /**
@@ -542,12 +565,16 @@ class Schema
     /**
      * 布尔字段
      *
+     * 使用 'boolean' 类型标记，交由 Column::buildType() 按 driver 映射为方言原生类型：
+     * pgsql→boolean / sqlite→integer / sqlsrv→bit / oracle→number(1) / mysql→tinyint(1)。
+     * 旧实现直接写 tinyint(1) 在 PostgreSQL 上建表报 "类型 tinyint 不存在"。
+     *
      * @param string $name 字段名
      * @return $this
      */
     public function boolean(string $name): static
     {
-        $this->columns[] = new Column($name, 'tinyint', ['length' => 1, 'default' => 0]);
+        $this->columns[] = new Column($name, 'boolean', ['default' => 0]);
         return $this;
     }
 
