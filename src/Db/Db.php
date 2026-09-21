@@ -302,11 +302,12 @@ class Db
      * 执行语句
      *
      * @example Db::statement('DROP TABLE IF EXISTS users')
+     * @example Db::statement('DELETE FROM logs WHERE created_at < ?', [$ts])
      */
-    public static function statement(string $sql): bool
+    public static function statement(string $sql, array $bindings = []): bool
     {
         $connection = self::getWriteConnection();
-        return $connection->statement($sql);
+        return $connection->statement($sql, $bindings);
     }
 
     /**

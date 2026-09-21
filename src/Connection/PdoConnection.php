@@ -36,6 +36,9 @@ class PdoConnection implements ExecutorInterface
     /** 预编译语句缓存条数上限（超出时不缓存，但仍返回可用语句） */
     private const STMT_CACHE_LIMIT = 256;
 
+    /** 可重试的驱动层错误码（断链/服务不可达，重连后重试有意义） */
+    private const RETRYABLE_DRIVER_CODES = [2002, 2003, 2006, 2013, 2045, 2101];
+
     protected array $config;
     protected ?PDO $pdo = null;
     protected int $transactionLevel = 0;
@@ -167,6 +170,23 @@ class PdoConnection implements ExecutorInterface
         return $stmt;
     }
 
+    /**
+     * 判断 PDOException 是否为连接类故障（只有这类才值得断连重试）
+     *
+     * SQL 语法错误、约束冲突等业务性错误重放一次只会重复失败并白白丢弃连接，
+     * 因此不再对任意 PDOException 盲目重试。
+     */
+    protected static function isConnectionFailure(PDOException $e): bool
+    {
+        $sqlState = (string) ($e->errorInfo[0] ?? $e->getCode());
+        // SQLSTATE 08xxx = connection exception；HYT00/HYT01 = 超时
+        if (str_starts_with($sqlState, '08') || $sqlState === 'HYT00' || $sqlState === 'HYT01') {
+            return true;
+        }
+
+        return in_array((int) ($e->errorInfo[1] ?? 0), self::RETRYABLE_DRIVER_CODES, true);
+    }
+
     #[\Override]
     public function select(string $sql, array $bindings = []): array
     {
@@ -178,7 +198,10 @@ class PdoConnection implements ExecutorInterface
 
         try {
             return $execute();
-        } catch (PDOException) {
+        } catch (PDOException $e) {
+            if (!self::isConnectionFailure($e)) {
+                throw $e;
+            }
             $this->disconnect();
             return $execute();
         }
@@ -195,7 +218,10 @@ class PdoConnection implements ExecutorInterface
 
         try {
             return $execute();
-        } catch (PDOException) {
+        } catch (PDOException $e) {
+            if (!self::isConnectionFailure($e)) {
+                throw $e;
+            }
             $this->disconnect();
             return $execute();
         }
@@ -212,7 +238,10 @@ class PdoConnection implements ExecutorInterface
 
         try {
             return $execute();
-        } catch (PDOException) {
+        } catch (PDOException $e) {
+            if (!self::isConnectionFailure($e)) {
+                throw $e;
+            }
             $this->disconnect();
             return $execute();
         }
@@ -229,17 +258,34 @@ class PdoConnection implements ExecutorInterface
 
         try {
             return $execute();
-        } catch (PDOException) {
+        } catch (PDOException $e) {
+            if (!self::isConnectionFailure($e)) {
+                throw $e;
+            }
             $this->disconnect();
             return $execute();
         }
     }
 
     #[\Override]
-    public function statement(string $sql): bool
+    public function statement(string $sql, array $bindings = []): bool
     {
-        $this->ensureConnected()->exec($sql);
-        return true;
+        // 走 prepare/execute 以支持占位符绑定；无绑定参数时与原 exec 行为等价
+        $execute = function () use ($sql, $bindings): bool {
+            $stmt = $this->prepareStatement($sql);
+            $stmt->execute($bindings);
+            return true;
+        };
+
+        try {
+            return $execute();
+        } catch (PDOException $e) {
+            if (!self::isConnectionFailure($e)) {
+                throw $e;
+            }
+            $this->disconnect();
+            return $execute();
+        }
     }
 
     #[\Override]

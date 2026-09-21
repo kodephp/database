@@ -20,6 +20,7 @@ class QueryBuilder
     protected ?int $offset = null;
     protected string $orderBy = '';
     protected string $orderDirection = 'ASC';
+    protected bool $orderIsRaw = false;
     protected ?string $groupBy = null;
     protected ?string $having = null;
     protected ?string $primaryKey = 'id';
@@ -103,11 +104,33 @@ class QueryBuilder
      */
     public function order(string|array $order, string $direction = 'ASC'): static
     {
-        if (is_array($order)) {
-            foreach ($order as $field => $dir) {
-                $this->orderBy($field, is_int($field) ? $direction : $dir);
+        $default = strtoupper($direction) === 'DESC' ? 'DESC' : 'ASC';
+
+        // 多列形态：数组（['a'=>'desc','b'=>'asc'] 或 ['a','b']）与逗号串（'a desc, b asc'）
+        if (is_array($order) || str_contains($order, ',')) {
+            $specs = [];
+            if (is_array($order)) {
+                foreach ($order as $key => $value) {
+                    if (is_int($key)) {
+                        $specs[] = [$value, $default];
+                    } else {
+                        $specs[] = [$key, strtoupper((string) $value) === 'DESC' ? 'DESC' : 'ASC'];
+                    }
+                }
+            } else {
+                foreach (explode(',', $order) as $segment) {
+                    $parts = preg_split('/\s+/', trim($segment));
+                    if ($parts[0] !== '') {
+                        $dir = strtoupper($parts[1] ?? $default);
+                        $specs[] = [$parts[0], $dir === 'DESC' ? 'DESC' : 'ASC'];
+                    }
+                }
             }
-            return $this;
+            if ($specs === []) {
+                return $this;
+            }
+            $fragment = implode(', ', array_map(fn(array $s): string => "{$s[0]} {$s[1]}", $specs));
+            return $this->orderByRaw($fragment);
         }
 
         if (stripos($order, ' ') !== false) {
@@ -117,7 +140,7 @@ class QueryBuilder
             return $this->orderBy($field, strtoupper($dir) === 'DESC' ? 'DESC' : 'ASC');
         }
 
-        return $this->orderBy($order, strtoupper($direction) === 'DESC' ? 'DESC' : 'ASC');
+        return $this->orderBy($order, $default);
     }
 
     /**
@@ -418,6 +441,7 @@ class QueryBuilder
     {
         $this->orderBy = $column;
         $this->orderDirection = strtoupper($direction) === 'DESC' ? 'DESC' : 'ASC';
+        $this->orderIsRaw = false;
         return $this;
     }
 
@@ -427,6 +451,8 @@ class QueryBuilder
     public function orderByRaw(string $sql): static
     {
         $this->orderBy = $sql;
+        $this->orderDirection = 'ASC';
+        $this->orderIsRaw = true;
         return $this;
     }
 
@@ -654,9 +680,10 @@ class QueryBuilder
         $placeholders = implode(', ', array_fill(0, count($columns), '?'));
         $values = [];
 
+        // 按首行列序对齐取值，避免后续记录键序不同或缺列导致绑定错位
         foreach ($records as $record) {
-            foreach ($record as $value) {
-                $values[] = $value;
+            foreach ($columns as $column) {
+                $values[] = $record[$column] ?? null;
             }
         }
 
@@ -696,7 +723,7 @@ class QueryBuilder
         );
 
         if (!empty($this->wheres)) {
-            $sql .= ' WHERE ' . implode(' AND ', $this->wheres);
+            $sql .= ' WHERE ' . $this->compileWheres();
         }
 
         try {
@@ -720,7 +747,7 @@ class QueryBuilder
 
         $bindings = [$amount];
         if (!empty($this->wheres)) {
-            $sql .= ' WHERE ' . implode(' AND ', $this->wheres);
+            $sql .= ' WHERE ' . $this->compileWheres();
             $bindings = array_merge($bindings, $this->bindings);
         }
 
@@ -745,7 +772,7 @@ class QueryBuilder
 
         $bindings = [$amount];
         if (!empty($this->wheres)) {
-            $sql .= ' WHERE ' . implode(' AND ', $this->wheres);
+            $sql .= ' WHERE ' . $this->compileWheres();
             $bindings = array_merge($bindings, $this->bindings);
         }
 
@@ -764,7 +791,7 @@ class QueryBuilder
         $sql = sprintf('DELETE FROM %s', $this->table);
 
         if (!empty($this->wheres)) {
-            $sql .= ' WHERE ' . implode(' AND ', $this->wheres);
+            $sql .= ' WHERE ' . $this->compileWheres();
         }
 
         try {
@@ -777,12 +804,12 @@ class QueryBuilder
     /**
      * 执行语句
      */
-    public function statement(string $sql): bool
+    public function statement(string $sql, array $bindings = []): bool
     {
         try {
-            return $this->connection->statement($sql);
+            return $this->connection->statement($sql, $bindings);
         } catch (\Throwable $e) {
-            throw QueryException::queryFailed($sql, [], $e);
+            throw QueryException::queryFailed($sql, $bindings, $e);
         }
     }
 
@@ -856,7 +883,7 @@ class QueryBuilder
         }
 
         if (!empty($this->wheres)) {
-            $sql .= ' WHERE ' . implode(' AND ', $this->wheres);
+            $sql .= ' WHERE ' . $this->compileWheres();
         }
 
         if ($this->groupBy) {
@@ -869,8 +896,8 @@ class QueryBuilder
 
         if ($this->orderBy) {
             $sql .= " ORDER BY {$this->orderBy}";
-            if ($this->orderDirection !== 'ASC' && $this->orderDirection !== 'DESC') {
-                $sql .= " {$this->orderDirection}";
+            if (!$this->orderIsRaw && $this->orderDirection === 'DESC') {
+                $sql .= " DESC";
             }
         }
 
@@ -921,6 +948,7 @@ class QueryBuilder
         $this->offset = null;
         $this->orderBy = '';
         $this->orderDirection = 'ASC';
+        $this->orderIsRaw = false;
         $this->groupBy = null;
         $this->having = null;
         $this->lockFor = null;
@@ -930,12 +958,33 @@ class QueryBuilder
     }
 
     /**
+     * 拼接 WHERE 条件
+     *
+     * orWhere 系列会把条目存为 "OR …" 前缀，若统一用 AND 连接会拼出
+     * "a = ? AND OR b = ?" 的非法 SQL，这里按前缀选择连接词。
+     */
+    protected function compileWheres(?array $wheres = null): string
+    {
+        $compiled = '';
+        foreach ($wheres ?? $this->wheres as $index => $where) {
+            if ($index === 0) {
+                $compiled = $where;
+                continue;
+            }
+            $compiled .= (stripos(ltrim($where), 'OR ') === 0) ? ' ' : ' AND ';
+            $compiled .= $where;
+        }
+        return $compiled;
+    }
+
+    /**
      * 清空 WHERE 条件
      */
     public function clearWhere(): static
     {
+        // 绑定为位置数组且全部由 where 系列方法追加，与 wheres 一并清空才能保持对齐
         $this->wheres = [];
-        $this->bindings = array_filter($this->bindings, fn($key) => !str_starts_with($key, 'where_'), ARRAY_FILTER_USE_KEY);
+        $this->bindings = [];
         return $this;
     }
 
@@ -946,6 +995,7 @@ class QueryBuilder
     {
         $this->orderBy = '';
         $this->orderDirection = 'ASC';
+        $this->orderIsRaw = false;
         return $this;
     }
 
@@ -980,7 +1030,7 @@ class QueryBuilder
             'wheres' => $this->wheres,
             'limit' => $this->limit,
             'offset' => $this->offset,
-            'orderBy' => $this->orderBy ? "{$this->orderBy} {$this->orderDirection}" : null,
+            'orderBy' => $this->orderBy ? ($this->orderIsRaw ? $this->orderBy : "{$this->orderBy} {$this->orderDirection}") : null,
             'bindings' => $this->bindings,
         ];
     }
@@ -1149,6 +1199,16 @@ class QueryBuilder
     }
 
     /**
+     * 当前连接的数据库方言（mysql / pgsql / sqlite / sqlsrv / oracle）
+     *
+     * 执行器未提供 getDriver 时保守回退 mysql。
+     */
+    protected function driverType(): string
+    {
+        return method_exists($this->connection, 'getDriver') ? $this->connection->getDriver() : 'mysql';
+    }
+
+    /**
      * 插入或忽略（唯一键冲突时忽略）
      *
      * @param array $data 数据
@@ -1164,16 +1224,27 @@ class QueryBuilder
         $columns = array_keys($data);
         $values = array_values($data);
         $placeholders = implode(', ', array_fill(0, count($values), '?'));
+        $driver = $this->driverType();
 
-        $sql = sprintf(
-            'INSERT IGNORE INTO %s (%s) VALUES (%s)',
-            $this->table,
-            implode(', ', $columns),
-            $placeholders
-        );
+        if ($driver === 'pgsql' || $driver === 'sqlite') {
+            $sql = sprintf(
+                'INSERT INTO %s (%s) VALUES (%s) ON CONFLICT DO NOTHING',
+                $this->table,
+                implode(', ', $columns),
+                $placeholders
+            );
+        } else {
+            $sql = sprintf(
+                'INSERT IGNORE INTO %s (%s) VALUES (%s)',
+                $this->table,
+                implode(', ', $columns),
+                $placeholders
+            );
+        }
 
         try {
-            return $this->connection->insert($sql, $values);
+            // 走 update 执行器取受影响行数：insert 返回的 lastInsertId 无法区分“被忽略”
+            return $this->connection->update($sql, $values) > 0;
         } catch (\Throwable) {
             return false;
         }
@@ -1451,6 +1522,7 @@ class QueryBuilder
         $copied->offset = $this->offset;
         $copied->orderBy = $this->orderBy;
         $copied->orderDirection = $this->orderDirection;
+        $copied->orderIsRaw = $this->orderIsRaw;
         $copied->groupBy = $this->groupBy;
         $copied->having = $this->having;
         $copied->joins = $this->joins;
@@ -1823,7 +1895,7 @@ class QueryBuilder
         $sql = "SELECT {$field}, COUNT(*) as count FROM {$this->table}";
 
         if (!empty($this->wheres)) {
-            $sql .= ' WHERE ' . implode(' AND ', $this->wheres);
+            $sql .= ' WHERE ' . $this->compileWheres();
         }
 
         $sql .= " GROUP BY {$field}";
@@ -1962,7 +2034,7 @@ class QueryBuilder
         $sql = "SELECT COUNT({$field}) as aggregate FROM {$this->table}";
 
         if (!empty($this->wheres)) {
-            $sql .= ' WHERE ' . implode(' AND ', $this->wheres);
+            $sql .= ' WHERE ' . $this->compileWheres();
         }
 
         if ($this->groupBy) {
@@ -2079,13 +2151,25 @@ class QueryBuilder
             $bindings[] = $value;
         }
 
-        $sql = "UPDATE {$this->table} SET " . implode(', ', $sets);
-
-        if (!empty($this->wheres)) {
-            $sql .= ' WHERE ' . implode(' AND ', $this->wheres);
+        $wheres = $this->wheres;
+        $whereBindings = $this->bindings;
+        foreach ($whereConditions as $column => $value) {
+            $wheres[] = "{$column} = ?";
+            $whereBindings[] = $value;
         }
 
-        return $this->connection->statement($sql, $bindings);
+        $sql = "UPDATE {$this->table} SET " . implode(', ', $sets);
+
+        if (!empty($wheres)) {
+            $sql .= ' WHERE ' . $this->compileWheres($wheres);
+            $bindings = array_merge($bindings, $whereBindings);
+        }
+
+        try {
+            return $this->connection->update($sql, $bindings);
+        } catch (\Throwable $e) {
+            throw QueryException::updateFailed($sql, $bindings, $e);
+        }
     }
 
     /**
@@ -2124,15 +2208,31 @@ class QueryBuilder
         $sets = [];
         foreach ($updateFields as $field) {
             if (!in_array($field, $uniqueBy)) {
-                $sets[] = "{$field} = VALUES({$field})";
+                $sets[] = $field;
             }
         }
 
-        if (!empty($sets)) {
-            $sql .= " ON DUPLICATE KEY UPDATE " . implode(', ', $sets);
+        // 方言分支：pgsql/sqlite 用 ON CONFLICT（含 DO NOTHING），mysql 保留 ON DUPLICATE KEY
+        $driver = $this->driverType();
+
+        if ($driver === 'pgsql' || $driver === 'sqlite') {
+            $conflictTarget = '(' . implode(', ', $uniqueBy) . ')';
+            if ($sets === []) {
+                $sql .= " ON CONFLICT {$conflictTarget} DO NOTHING";
+            } else {
+                $assignments = array_map(fn(string $f): string => "{$f} = excluded.{$f}", $sets);
+                $sql .= " ON CONFLICT {$conflictTarget} DO UPDATE SET " . implode(', ', $assignments);
+            }
+        } elseif ($sets !== []) {
+            $assignments = array_map(fn(string $f): string => "{$f} = VALUES({$f})", $sets);
+            $sql .= " ON DUPLICATE KEY UPDATE " . implode(', ', $assignments);
         }
 
-        return $this->connection->statement($sql, $bindings);
+        try {
+            return $this->connection->update($sql, $bindings);
+        } catch (\Throwable $e) {
+            throw QueryException::insertFailed($sql, $bindings, $e);
+        }
     }
 
     /**
@@ -2151,7 +2251,7 @@ class QueryBuilder
         $placeholders = implode(', ', array_fill(0, count($ids), '?'));
         $sql = "DELETE FROM {$this->table} WHERE {$column} IN ({$placeholders})";
 
-        return $this->connection->statement($sql, $ids);
+        return $this->connection->delete($sql, $ids);
     }
 
     /**

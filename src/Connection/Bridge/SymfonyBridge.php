@@ -89,9 +89,9 @@ class SymfonyBridge implements ExecutorInterface
     }
 
     #[\Override]
-    public function statement(string $sql): bool
+    public function statement(string $sql, array $bindings = []): bool
     {
-        $this->conn()->executeStatement($sql);
+        $this->conn()->executeStatement($sql, $bindings);
         return true;
     }
 

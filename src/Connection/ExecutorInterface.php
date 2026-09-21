@@ -55,7 +55,7 @@ interface ExecutorInterface
      * @param string $sql SQL 语句
      * @return bool
      */
-    public function statement(string $sql): bool;
+    public function statement(string $sql, array $bindings = []): bool;
 
     /**
      * 开启事务

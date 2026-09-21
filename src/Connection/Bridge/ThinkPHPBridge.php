@@ -50,9 +50,9 @@ class ThinkPHPBridge implements ExecutorInterface
     }
 
     #[\Override]
-    public function statement(string $sql): bool
+    public function statement(string $sql, array $bindings = []): bool
     {
-        $this->conn()->execute($sql);
+        $this->conn()->execute($sql, $bindings);
         return true;
     }
 

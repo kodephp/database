@@ -413,12 +413,13 @@ class Connection
      * 执行语句
      *
      * @param string $sql SQL语句
+     * @param array $bindings 绑定参数
      * @return bool
      */
-    public function statement(string $sql): bool
+    public function statement(string $sql, array $bindings = []): bool
     {
         $connection = $this->getConnection();
-        return $connection->statement($sql);
+        return $connection->statement($sql, $bindings);
     }
 
     /**

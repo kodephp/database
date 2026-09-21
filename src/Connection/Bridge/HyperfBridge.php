@@ -50,9 +50,9 @@ class HyperfBridge implements ExecutorInterface
     }
 
     #[\Override]
-    public function statement(string $sql): bool
+    public function statement(string $sql, array $bindings = []): bool
     {
-        return $this->db()->statement($sql);
+        return $this->db()->statement($sql, $bindings);
     }
 
     #[\Override]
