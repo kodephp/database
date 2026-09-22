@@ -11,7 +11,8 @@
 - **分库分表**：按年月、按哈希、按后缀、范围映射、自动路由
 - **连接池管理**：协程上下文隔离，支持 Fiber；无池时自动退化为单连接（`single`），零配置也能保证事务原子性
 - **常驻内存优化**：内置 PDO 执行器支持预编译语句缓存（上限 256，按 SQL 文本复用 PDOStatement）、惰性断连重试（失效由 PDOException 暴露、捕获后重连重试一次）、免去每查一次 SELECT 1 探活，显著降低常驻内存场景下的 DB 往返
-- **事件监听**：SQL 监听、事务事件、模型事件钩子
+- **查询观测**：查询日志、前后查询钩子、`SqlEvent` 三条 API 统一挂在执行器切面上（含真实耗时、连接名与失败异常），内置 PDO 执行器和四个 ORM 桥接器同一口径
+- **事件监听**：SQL 事件已接线，模型事件另有钩子体系；事务事件类尚无派发点（见「事件监听」一节）
 - **Schema 定义**：表结构构建器
 - **迁移（Migrations）**：基于 Schema 的迁移基类与运行器，自动记录迁移历史
 - **获取器/修改器**：类型转换、属性访问（PHP 8.3 `json_validate` 安全校验）
@@ -1069,10 +1070,27 @@ $results = Db::executeFile('/path/to.sql');
 Db::closeAllConnections();
 
 // 查询日志
-Db::enableQueryLog(true);  // 启用查询日志
-$logs = Db::getQueryLog(); // 获取所有查询日志
-Db::clearQueryLog();       // 清除查询日志
+Db::enableQueryLog(true);   // 启用查询日志
+$logs = Db::getQueryLog();  // 最近最多 Db::QUERY_LOG_LIMIT 条
+Db::clearQueryLog();        // 清空日志与「最后一条 SQL」
+Db::getLastSql();           // 最后执行的一条 SQL
 ```
+
+每条日志的结构：
+
+```php
+[
+    'sql' => 'SELECT * FROM users WHERE id = ?',
+    'bindings' => [1],
+    'time' => 0.00042,               // 秒；含断连重试等执行器内部补偿，等于调用方实际感受到的耗时
+    'connection' => 'pgsql_read',    // 来自 Db::addConnection() 的连接名，未命名时为 null
+    'created_at' => '2026-09-23 10:00:00',
+]
+```
+
+> 常驻内存进程里日志数组封顶在 `Db::QUERY_LOG_LIMIT`（默认 200 条，丢最旧留最近），
+> 不会随请求数无限增长；但它是**进程级静态状态**，跨请求共用，
+> 想按请求统计请在请求结束时 `Db::clearQueryLog()`。
 
 ### 行锁定
 
@@ -1532,26 +1550,38 @@ User::clearAllEvents();  // 清除所有事件（含观察者、一次性、队�
 use Kode\Database\Db\Connection;
 
 // 注册查询前钩子（所有连接）
-Connection::beforeQuery(function ($sql, $bindings, $conn) {
+Connection::beforeQuery(function (string $sql, array $bindings, object $executor) {
     Log::debug("SQL: {$sql}", $bindings);
 });
 
 // 注册查询前钩子（指定连接）
-Connection::beforeQuery(function ($sql, $bindings, $conn) {
+Connection::beforeQuery(function (string $sql, array $bindings, object $executor) {
     Log::debug("Slave SQL: {$sql}");
 }, 'slave');
 
-// 注册查询后钩子
-Connection::afterQuery(function ($sql, $bindings, $result, $conn) {
-    Log::info("查询完成: {$sql}", ['rows' => count($result)]);
+// 改写本次查询：返回 [$sql] 或 [$sql, $bindings]，不返回则原样执行
+Connection::beforeQuery(function (string $sql, array $bindings) {
+    return ['/* trace:abc123 */ '.$sql, $bindings];
+});
+
+// 注册查询后钩子（$result 为查询结果；查询失败时是那个 Throwable）
+Connection::afterQuery(function (string $sql, array $bindings, mixed $result, object $executor, float $seconds) {
+    if ($result instanceof Throwable) {
+        Log::error("查询失败 {$sql}: {$result->getMessage()}");
+
+        return;
+    }
+    if ($seconds > 0.1) {
+        Log::warning("慢查询 {$seconds}s: {$sql}");
+    }
 });
 
 // 同时注册前后钩子
 Connection::registerQueryHook([
-    'before' => function ($sql, $bindings, $conn) {
+    'before' => function (string $sql, array $bindings, object $executor) {
         // 查询前
     },
-    'after' => function ($sql, $bindings, $result, $conn) {
+    'after' => function (string $sql, array $bindings, mixed $result, object $executor, float $seconds) {
         // 查询后
     }
 ], 'default');
@@ -1564,6 +1594,18 @@ Connection::getAfterQueryHooks();
 Connection::clearQueryHooks();  // 清除所有
 Connection::clearQueryHooks('slave');  // 清除指定
 ```
+
+触发点在执行器的观测切面（`Connection\QueryObservation`）：`Db::table()->get()`、`Db::select()` 直查、
+连接池取到的裸执行器，以及 Laravel / ThinkPHP / Symfony / Hyperf 桥接器，走的都是同一处，
+所以不会因为「换了调用姿势」或「换了 ORM」而漏掉某条 SQL。
+
+几条行为约定：
+
+- 钩子是**追加**语义（同一连接可挂多个，按注册顺序执行），不是覆盖。
+- 前后钩子与查询日志、事件三者互不影响：after 钩子或监听器抛异常不会打断查询，
+  也不会连带吃掉其它观测点，异常写进 `error_log`（带出处与 SQL 前 200 字）。
+- 前钩子抛异常会**终止**这次查询（它本来就可以用来拦危险 SQL）。
+- 没人观测时（日志关、无钩子、无监听器）切面直接透传，不计时也不构造事件对象。
 
 ---
 
@@ -2013,6 +2055,9 @@ $results = $conn->raw('SELECT * FROM users', []);
 
 ## 事件监听
 
+每条 SQL 执行完（成功或失败）都会派发一次 `SqlEvent`，与查询日志、前后钩子共用同一个触发点。
+没有任何监听器时不构造事件对象，所以「不监听 = 不额外开销」。
+
 ```php
 use Kode\Database\Event\EventManager;
 use Kode\Database\Event\SqlListener;
@@ -2029,25 +2074,32 @@ foreach ($sqls as $sql) {
 }
 ```
 
-### 事务事件
+监听器也可以直接收事件对象，慢查询日志就是这么写的：
 
 ```php
-use Kode\Database\Event\TransactionBeginEvent;
-use Kode\Database\Event\TransactionCommitEvent;
-use Kode\Database\Event\TransactionRollbackEvent;
-
-EventManager::getInstance()->listen(TransactionBeginEvent::class, function ($event) {
-    echo "事务开始" . PHP_EOL;
-});
-
-EventManager::getInstance()->listen(TransactionCommitEvent::class, function ($event) {
-    echo "事务提交" . PHP_EOL;
-});
-
-EventManager::getInstance()->listen(TransactionRollbackEvent::class, function ($event) {
-    echo "事务回滚" . PHP_EOL;
+EventManager::getInstance()->listen(SqlEvent::class, function (SqlEvent $event) {
+    $event->getSql();         // 实际执行的 SQL（含前钩子改写）
+    $event->getBindings();    // 参数
+    $event->getConnection();  // 连接名，未命名为 null
+    $event->getDuration();    // 秒，含断连重试
+    $event->getTime();        // 事件发生时刻（unix 时间戳，不是耗时）
+    $event->failed();         // 这次查询是否失败
+    $event->getError();       // 失败时的 Throwable，成功为 null
+    $event->getFormattedSql();// 参数已代入的可读版本，仅供人看（日志/调试），不要拿去执行
 });
 ```
+
+注册监听也可以省掉事件名，由 `ListenerInterface::listen()` 自己声明：
+
+```php
+EventManager::getInstance()->listen(null, MySqlListener::class); // 类不存在 / 没声明事件名 → InvalidArgumentException
+```
+
+### 事务事件
+
+`TransactionBeginEvent` / `TransactionCommitEvent` / `TransactionRollbackEvent` 三个类**目前没有包内派发点**：
+注册监听不会收到回调。事务由各执行器与底层 ORM 自行管理（Laravel / Hyperf 各自维护嵌套层级），
+层级口径还没统一，所以先不硬派。要观测事务，暂用 `SqlEvent` 之外自行埋点，或等后续版本接线。
 
 ---
 
@@ -2379,6 +2431,7 @@ src/
 │   ├── ExecutorInterface.php  # 执行器契约（select/insert/update/delete/事务）
 │   ├── ConnectionFactory.php
 │   ├── PdoConnection.php     # 内置 PDO 执行器（语句缓存 + 断连重试，常驻内存优化）
+│   ├── QueryObservation.php  # 查询观测切面（钩子 + 日志 + SqlEvent），各执行器共用
 │   ├── PdoConnector.php
 │   ├── LaravelConnector.php
 │   ├── ThinkPHPConnector.php

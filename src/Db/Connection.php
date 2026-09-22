@@ -616,108 +616,94 @@ class Connection
 
     /**
      * 查询钩子回调
+     *
+     * 按「连接名 => 回调列表」存放，'*' 表示对所有连接生效。
+     * 触发点在执行器的观测切面（{@see \Kode\Database\Connection\QueryObservation}），
+     * 所以走 Db::connection()->select()、QueryBuilder 还是裸执行器，
+     * 内置 PDO 执行器还是某个 ORM 桥接器，都会经过同一处。
+     *
+     * @var array<string, list<callable>>
      */
     protected static array $beforeQueryCallbacks = [];
+    /** @var array<string, list<callable>> */
     protected static array $afterQueryCallbacks = [];
-    protected static array $queryHooks = [];
 
     /**
      * 注册查询前钩子
      *
-     * @param callable $callback 回调函数，参数: (string $sql, array $bindings, Connection $connection)
+     * @param callable $callback 签名：(string $sql, array $bindings, object $executor)
+     *                           返回 [$sql, $bindings?] 可改写本次查询，否则原样放行
      * @param string|null $connectionName 连接名，为 null 表示所有连接
      */
     public static function beforeQuery(callable $callback, ?string $connectionName = null): void
     {
-        $key = $connectionName ?? '*';
-        if (!isset(self::$beforeQueryCallbacks[$key])) {
-            self::$beforeQueryCallbacks[$key] = [];
-        }
-        self::$beforeQueryCallbacks[$key][] = $callback;
+        self::$beforeQueryCallbacks[$connectionName ?? '*'][] = $callback;
     }
 
     /**
      * 注册查询后钩子
      *
-     * @param callable $callback 回调函数，参数: (string $sql, array $bindings, array $result, Connection $connection)
+     * @param callable $callback 签名：(string $sql, array $bindings, mixed $result, object $executor, float $seconds)
+     *                           执行失败时 $result 为 \Throwable
      * @param string|null $connectionName 连接名，为 null 表示所有连接
      */
     public static function afterQuery(callable $callback, ?string $connectionName = null): void
     {
-        $key = $connectionName ?? '*';
-        if (!isset(self::$afterQueryCallbacks[$key])) {
-            self::$afterQueryCallbacks[$key] = [];
-        }
-        self::$afterQueryCallbacks[$key][] = $callback;
+        self::$afterQueryCallbacks[$connectionName ?? '*'][] = $callback;
     }
 
     /**
-     * 注册查询钩子（同时包含前后）
+     * 注册查询钩子（一次登记前后两个）
      *
-     * @param array $hooks 钩子配置 ['before' => callable, 'after' => callable]
+     * @param array{before?:callable,after?:callable} $hooks
      * @param string|null $connectionName 连接名
      */
     public static function registerQueryHook(array $hooks, ?string $connectionName = null): void
     {
-        $key = $connectionName ?? '*';
-        if (!isset(self::$queryHooks[$key])) {
-            self::$queryHooks[$key] = [];
+        if (isset($hooks['before']) && is_callable($hooks['before'])) {
+            self::beforeQuery($hooks['before'], $connectionName);
         }
-        self::$queryHooks[$key][] = $hooks;
+
+        if (isset($hooks['after']) && is_callable($hooks['after'])) {
+            self::afterQuery($hooks['after'], $connectionName);
+        }
     }
 
     /**
-     * 触发查询前钩子
+     * 触发「查询前」钩子。
+     *
+     * 钩子返回 [$sql, $bindings]（或 [$sql]）时改写本次查询，没返回就原样放行 ——
+     * 给「加 trace 注释 / 换表名」这类用法留着口子。只关心查询的钩子直接 return; 即可。
+     *
+     * @param array<string> $keys 依次查找的注册键（连接名、'*'）
+     *
+     * @return array{0: string, 1: array} 生效的 SQL 与参数
      */
-    protected function triggerBeforeQuery(string $sql, array $bindings): array
+    public static function fireBeforeQuery(array $keys, string $sql, array $bindings, object $executor): array
     {
-        $sql = trim($sql);
-        $bindings = $bindings ?? [];
-
-        $this->executeGlobalHook(self::$beforeQueryCallbacks, $sql, $bindings);
-
-        if ($this->name !== null) {
-            $this->executeGlobalHook(self::$beforeQueryCallbacks, $sql, $bindings);
+        foreach ($keys as $key) {
+            foreach (self::$beforeQueryCallbacks[$key] ?? [] as $callback) {
+                $rewritten = $callback($sql, $bindings, $executor);
+                if (is_array($rewritten) && isset($rewritten[0]) && is_string($rewritten[0])) {
+                    $sql = $rewritten[0];
+                    $bindings = array_key_exists(1, $rewritten) ? (array) $rewritten[1] : $bindings;
+                }
+            }
         }
 
         return [$sql, $bindings];
     }
 
     /**
-     * 触发查询后钩子
+     * 触发「查询后」钩子
+     *
+     * @param array<string> $keys
      */
-    protected function triggerAfterQuery(string $sql, array $bindings, array $result): array
+    public static function fireAfterQuery(array $keys, string $sql, array $bindings, mixed $result, object $executor, float $seconds): void
     {
-        $this->executeGlobalHook(self::$afterQueryCallbacks, $sql, $bindings, $result);
-
-        if ($this->name !== null) {
-            $this->executeGlobalHook(self::$afterQueryCallbacks, $sql, $bindings, $result);
-        }
-
-        return $result;
-    }
-
-    /**
-     * 执行全局钩子
-     */
-    protected function executeGlobalHook(array &$hooks, string $sql, array $bindings, ?array $result = null): void
-    {
-        $keys = ['*'];
-        if ($this->name !== null) {
-            $keys[] = $this->name;
-        }
-
         foreach ($keys as $key) {
-            if (!isset($hooks[$key])) {
-                continue;
-            }
-
-            foreach ($hooks[$key] as $callback) {
-                if ($result !== null && isset($callback['after'])) {
-                    $callback['after']($sql, $bindings, $result, $this);
-                } elseif ($result === null && isset($callback['before'])) {
-                    $callback['before']($sql, $bindings, $this);
-                }
+            foreach (self::$afterQueryCallbacks[$key] ?? [] as $callback) {
+                $callback($sql, $bindings, $result, $executor, $seconds);
             }
         }
     }
@@ -741,6 +727,14 @@ class Connection
     }
 
     /**
+     * 是否登记过任何查询钩子（执行器据此决定要不要做观测）
+     */
+    public static function hasQueryHooks(): bool
+    {
+        return self::$beforeQueryCallbacks !== [] || self::$afterQueryCallbacks !== [];
+    }
+
+    /**
      * 清除查询钩子
      */
     public static function clearQueryHooks(?string $connectionName = null): void
@@ -748,11 +742,9 @@ class Connection
         if ($connectionName === null) {
             self::$beforeQueryCallbacks = [];
             self::$afterQueryCallbacks = [];
-            self::$queryHooks = [];
         } else {
             unset(self::$beforeQueryCallbacks[$connectionName]);
             unset(self::$afterQueryCallbacks[$connectionName]);
-            unset(self::$queryHooks[$connectionName]);
         }
     }
 

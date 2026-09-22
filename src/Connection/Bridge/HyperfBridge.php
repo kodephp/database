@@ -6,15 +6,20 @@ namespace Kode\Database\Connection\Bridge;
 
 use Hyperf\DbConnection\Db;
 use Kode\Database\Connection\ExecutorInterface;
+use Kode\Database\Connection\QueryObservation;
 
 /**
  * Hyperf ORM 桥接器
  *
  * 复用项目既有的 Hyperf\DbConnection\Db 门面（API 与 Laravel 高度一致），
  * 与 Hyperf ORM 体系融合。当 Hyperf 未初始化时，连接器自动回退到内置 PdoConnection。
+ *
+ * 查询观测走 {@see QueryObservation}，与内置 PDO 执行器同一条口径。
  */
 class HyperfBridge implements ExecutorInterface
 {
+    use QueryObservation;
+
     public function __construct(protected array $config = [])
     {
     }
@@ -27,32 +32,36 @@ class HyperfBridge implements ExecutorInterface
     #[\Override]
     public function select(string $sql, array $bindings = []): array
     {
-        return $this->db()->select($sql, $bindings);
+        return $this->observe($sql, $bindings, fn (string $sql, array $bindings): array => $this->db()->select($sql, $bindings));
     }
 
     #[\Override]
     public function insert(string $sql, array $bindings = []): int|string
     {
-        $this->db()->insert($sql, $bindings);
-        return $this->db()->getPdo()->lastInsertId();
+        return $this->observe($sql, $bindings, function (string $sql, array $bindings): int|string {
+            $connection = $this->db();
+            $connection->insert($sql, $bindings);
+
+            return $connection->getPdo()->lastInsertId();
+        });
     }
 
     #[\Override]
     public function update(string $sql, array $bindings = []): int
     {
-        return $this->db()->update($sql, $bindings);
+        return $this->observe($sql, $bindings, fn (string $sql, array $bindings): int => $this->db()->update($sql, $bindings));
     }
 
     #[\Override]
     public function delete(string $sql, array $bindings = []): int
     {
-        return $this->db()->delete($sql, $bindings);
+        return $this->observe($sql, $bindings, fn (string $sql, array $bindings): int => $this->db()->delete($sql, $bindings));
     }
 
     #[\Override]
     public function statement(string $sql, array $bindings = []): bool
     {
-        return $this->db()->statement($sql, $bindings);
+        return $this->observe($sql, $bindings, fn (string $sql, array $bindings): bool => $this->db()->statement($sql, $bindings));
     }
 
     #[\Override]

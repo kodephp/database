@@ -158,6 +158,9 @@ class Db
      */
     public static function addConnection(string $name, array $config): void
     {
+        // 连接名随配置下沉到执行器：查询观测（查询日志 / 钩子 / SqlEvent）要标出「这条 SQL 跑在哪个连接上」，
+        // 读写分离与分库场景下没有这个名字就只能看到一串无主 SQL。
+        $config['connection_name'] = $name;
         self::$connections[$name] = $config;
 
         if (PoolManager::isPoolEnabled($config)) {
@@ -512,6 +515,8 @@ class Db
         }
 
         $config = self::$connections[$name] ?? self::$config;
+        // 走全局配置时同样补上连接名（addConnection 已经带过就不覆盖）
+        $config['connection_name'] ??= $name;
         $connection = self::$factory->make($config);
         self::$connectionCache[$name] = $connection;
 
@@ -967,6 +972,14 @@ class Db
     /** @var bool 是否启用查询日志 */
     protected static bool $queryLogEnabled = false;
 
+    /**
+     * 查询日志条数上限。
+     *
+     * 常驻进程里一个 worker 要跑几十万条 SQL，无上限的数组就是慢性内存泄漏；
+     * 超出后丢最旧的（保留最近 N 条，正是排查时想要的那段）。
+     */
+    public const QUERY_LOG_LIMIT = 200;
+
     /** @var array 查询日志 */
     protected static array $queryLogs = [];
 
@@ -1361,8 +1374,16 @@ class Db
     {
         self::$queryLogEnabled = $enabled;
         if (!$enabled) {
-            self::$queryLogs = [];
+            self::clearQueryLog();
         }
+    }
+
+    /**
+     * 查询日志是否开启
+     */
+    public static function isQueryLogEnabled(): bool
+    {
+        return self::$queryLogEnabled;
     }
 
     /**
@@ -1378,27 +1399,46 @@ class Db
     /**
      * 记录查询日志
      *
+     * 由执行器在每条 SQL 跑完后调用（见 {@see \Kode\Database\Connection\QueryObservation}），
+     * 未开启时直接返回，所以「开了才有开销」。
+     *
      * @param string $sql SQL 语句
      * @param array $bindings 参数
-     * @param float $time 执行时间
+     * @param float $time 执行耗时（秒）
+     * @param string|null $connection 连接名
      */
-    public static function logQuery(string $sql, array $bindings = [], float $time = 0): void
+    public static function logQuery(string $sql, array $bindings = [], float $time = 0, ?string $connection = null): void
     {
-        if (self::$queryLogEnabled) {
-            self::$queryLogs[] = [
-                'sql' => $sql,
-                'bindings' => $bindings,
-                'time' => $time,
-                'created_at' => date('Y-m-d H:i:s'),
-            ];
+        self::$lastSql = $sql;
+
+        if (!self::$queryLogEnabled) {
+            return;
+        }
+
+        self::$queryLogs[] = [
+            'sql' => $sql,
+            'bindings' => $bindings,
+            'time' => $time,
+            'connection' => $connection,
+            'created_at' => date('Y-m-d H:i:s'),
+        ];
+
+        // 攒够两倍上限再一次性裁剪：既封住上限，又不用每条查询都挪一次数组。
+        $limit = self::QUERY_LOG_LIMIT;
+        if (count(self::$queryLogs) > $limit * 2) {
+            self::$queryLogs = array_slice(self::$queryLogs, -$limit);
         }
     }
 
     /**
      * 清除查询日志
+     *
+     * 「最后一条 SQL」一并清掉：它是同一条观测流水线的副产品，只清数组会留下
+     * 上一轮（甚至上一个请求/连接）的 SQL，读写分离下拿它定位问题会指向错的链路。
      */
     public static function clearQueryLog(): void
     {
         self::$queryLogs = [];
+        self::$lastSql = null;
     }
 }

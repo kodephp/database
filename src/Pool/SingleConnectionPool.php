@@ -48,8 +48,8 @@ class SingleConnectionPool implements PoolInterface
      * 获取连接（单例复用）
      *
      * 单连接退化池始终复用同一 Executor 实例，底层 PDO 的惰性连接与断线重试由
-     * PdoConnection 自身负责（isConnected 在 pdo===null 时返回 false 属正常惰性状态，
-     * 不应每次 get() 都判为失效而重建，否则 :memory: 等场景会每次新建连接破坏事务/内存库语义）。
+     * PdoConnection 自身负责（isConnected 在已建连时会真发一条 SELECT 1 探活，每次 get() 都判一遍
+     * 等于凭空多一次 DB 往返；:memory: 等场景重建连接还会把库内容和未提交事务一起丢掉）。
      */
     public function get(): mixed
     {

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Kode\Database\Connection\Bridge;
 
 use Kode\Database\Connection\ExecutorInterface;
+use Kode\Database\Connection\QueryObservation;
 
 /**
  * Laravel ORM 桥接器
@@ -12,9 +13,14 @@ use Kode\Database\Connection\ExecutorInterface;
  * 当项目已安装 illuminate/database（或 laravel/framework）并初始化 Capsule / DB 门面后，
  * 本桥接器复用其连接管理器执行 SQL，从而与项目现有 Laravel ORM 完全融合。
  * 若 Laravel 未初始化，连接器会自动回退到内置 PdoConnection。
+ *
+ * 查询观测走 {@see QueryObservation}：接了哪个 ORM 都同一条口径，
+ * 不需要开发者再去分别打开 Laravel 自己的 querylog / 事件。
  */
 class LaravelBridge implements ExecutorInterface
 {
+    use QueryObservation;
+
     public function __construct(protected array $config = [])
     {
     }
@@ -38,32 +44,36 @@ class LaravelBridge implements ExecutorInterface
     #[\Override]
     public function select(string $sql, array $bindings = []): array
     {
-        return $this->db()->select($sql, $bindings);
+        return $this->observe($sql, $bindings, fn (string $sql, array $bindings): array => $this->db()->select($sql, $bindings));
     }
 
     #[\Override]
     public function insert(string $sql, array $bindings = []): int|string
     {
-        $this->db()->insert($sql, $bindings);
-        return $this->db()->getPdo()->lastInsertId();
+        return $this->observe($sql, $bindings, function (string $sql, array $bindings): int|string {
+            $connection = $this->db();
+            $connection->insert($sql, $bindings);
+
+            return $connection->getPdo()->lastInsertId();
+        });
     }
 
     #[\Override]
     public function update(string $sql, array $bindings = []): int
     {
-        return $this->db()->update($sql, $bindings);
+        return $this->observe($sql, $bindings, fn (string $sql, array $bindings): int => $this->db()->update($sql, $bindings));
     }
 
     #[\Override]
     public function delete(string $sql, array $bindings = []): int
     {
-        return $this->db()->delete($sql, $bindings);
+        return $this->observe($sql, $bindings, fn (string $sql, array $bindings): int => $this->db()->delete($sql, $bindings));
     }
 
     #[\Override]
     public function statement(string $sql, array $bindings = []): bool
     {
-        return $this->db()->statement($sql, $bindings);
+        return $this->observe($sql, $bindings, fn (string $sql, array $bindings): bool => $this->db()->statement($sql, $bindings));
     }
 
     #[\Override]

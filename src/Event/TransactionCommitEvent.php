@@ -6,6 +6,8 @@ namespace Kode\Database\Event;
 
 /**
  * 事务提交事件
+ *
+ * 注意：目前没有包内派发点，见 {@see TransactionBeginEvent} 的说明。
  */
 class TransactionCommitEvent
 {

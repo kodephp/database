@@ -16,9 +16,13 @@ use PDOStatement;
  *
  * 同时，Laravel / ThinkPHP / Symfony / Hyperf 连接器在检测到对应 ORM 时，
  * 会优先复用该 ORM 的连接管理器（通过各自的 Bridge 类），否则同样回退到本类。
+ *
+ * 查询观测（钩子 / 日志 / 事件）来自 {@see QueryObservation}，与各 ORM 桥接器共用同一实现。
  */
 class PdoConnection implements ExecutorInterface
 {
+    use QueryObservation;
+
     /** 支持的数据库类型别名 -> PDO DSN 驱动名 */
     private const PDO_DRIVERS = [
         'mysql' => 'mysql',
@@ -187,15 +191,13 @@ class PdoConnection implements ExecutorInterface
         return in_array((int) ($e->errorInfo[1] ?? 0), self::RETRYABLE_DRIVER_CODES, true);
     }
 
-    #[\Override]
-    public function select(string $sql, array $bindings = []): array
+    /**
+     * 执行一次 SQL，连接类故障时断连重试一次（非连接类故障直接抛出，不重复执行）。
+     *
+     * @param callable(): mixed $execute
+     */
+    protected function retryOnce(callable $execute): mixed
     {
-        $execute = function () use ($sql, $bindings): array {
-            $stmt = $this->prepareStatement($sql);
-            $stmt->execute($bindings);
-            return $stmt->fetchAll(PDO::FETCH_ASSOC);
-        };
-
         try {
             return $execute();
         } catch (PDOException $e) {
@@ -203,89 +205,75 @@ class PdoConnection implements ExecutorInterface
                 throw $e;
             }
             $this->disconnect();
+
             return $execute();
         }
+    }
+
+    #[\Override]
+    public function select(string $sql, array $bindings = []): array
+    {
+        return $this->observe($sql, $bindings, function (string $sql, array $bindings): array {
+            return $this->retryOnce(function () use ($sql, $bindings): array {
+                $stmt = $this->prepareStatement($sql);
+                $stmt->execute($bindings);
+
+                return $stmt->fetchAll(PDO::FETCH_ASSOC);
+            });
+        });
     }
 
     #[\Override]
     public function insert(string $sql, array $bindings = []): int|string
     {
-        $execute = function () use ($sql, $bindings): int|string {
-            $stmt = $this->prepareStatement($sql);
-            $stmt->execute($bindings);
-            return $this->ensureConnected()->lastInsertId();
-        };
+        return $this->observe($sql, $bindings, function (string $sql, array $bindings): int|string {
+            return $this->retryOnce(function () use ($sql, $bindings): int|string {
+                $stmt = $this->prepareStatement($sql);
+                $stmt->execute($bindings);
 
-        try {
-            return $execute();
-        } catch (PDOException $e) {
-            if (!self::isConnectionFailure($e)) {
-                throw $e;
-            }
-            $this->disconnect();
-            return $execute();
-        }
+                return $this->ensureConnected()->lastInsertId();
+            });
+        });
     }
 
     #[\Override]
     public function update(string $sql, array $bindings = []): int
     {
-        $execute = function () use ($sql, $bindings): int {
-            $stmt = $this->prepareStatement($sql);
-            $stmt->execute($bindings);
-            return $stmt->rowCount();
-        };
+        return $this->observe($sql, $bindings, function (string $sql, array $bindings): int {
+            return $this->retryOnce(function () use ($sql, $bindings): int {
+                $stmt = $this->prepareStatement($sql);
+                $stmt->execute($bindings);
 
-        try {
-            return $execute();
-        } catch (PDOException $e) {
-            if (!self::isConnectionFailure($e)) {
-                throw $e;
-            }
-            $this->disconnect();
-            return $execute();
-        }
+                return $stmt->rowCount();
+            });
+        });
     }
 
     #[\Override]
     public function delete(string $sql, array $bindings = []): int
     {
-        $execute = function () use ($sql, $bindings): int {
-            $stmt = $this->prepareStatement($sql);
-            $stmt->execute($bindings);
-            return $stmt->rowCount();
-        };
+        return $this->observe($sql, $bindings, function (string $sql, array $bindings): int {
+            return $this->retryOnce(function () use ($sql, $bindings): int {
+                $stmt = $this->prepareStatement($sql);
+                $stmt->execute($bindings);
 
-        try {
-            return $execute();
-        } catch (PDOException $e) {
-            if (!self::isConnectionFailure($e)) {
-                throw $e;
-            }
-            $this->disconnect();
-            return $execute();
-        }
+                return $stmt->rowCount();
+            });
+        });
     }
 
     #[\Override]
     public function statement(string $sql, array $bindings = []): bool
     {
-        // 走 prepare/execute 以支持占位符绑定；无绑定参数时与原 exec 行为等价
-        $execute = function () use ($sql, $bindings): bool {
-            $stmt = $this->prepareStatement($sql);
-            $stmt->execute($bindings);
-            return true;
-        };
+        return $this->observe($sql, $bindings, function (string $sql, array $bindings): bool {
+            // 走 prepare/execute 以支持占位符绑定；无绑定参数时与原 exec 行为等价
+            return $this->retryOnce(function () use ($sql, $bindings): bool {
+                $stmt = $this->prepareStatement($sql);
+                $stmt->execute($bindings);
 
-        try {
-            return $execute();
-        } catch (PDOException $e) {
-            if (!self::isConnectionFailure($e)) {
-                throw $e;
-            }
-            $this->disconnect();
-            return $execute();
-        }
+                return true;
+            });
+        });
     }
 
     #[\Override]
