@@ -17,7 +17,7 @@ use Kode\Database\Db\Connection;
 class Db
 {
     /** @var string 版本号（与 composer.json 的 version 保持同步，漏改由 VersionGuardTest 拦下） */
-    public const string VERSION = '1.21.0';
+    public const string VERSION = '1.22.0';
 
     /**
      * 获取本包版本号
@@ -180,6 +180,69 @@ class Db
         } else {
             // 无池时退化为单连接池
             PoolManager::init($config, $name, 'single');
+        }
+    }
+
+    /**
+     * 移除命名数据库连接并释放其底层连接/池
+     *
+     * 与 addConnection 成对：常驻多进程运行时里，只注册不回收的连接会把配置、连接池和
+     * 已建立的 PDO 句柄一直留在 worker 上（典型场景：建库/迁移用的临时维护连接）。
+     *
+     * 默认连接不允许移除（移掉之后所有不带连接名的查询都会失败，属于误用）。
+     * 注意：移除后该连接名不再存在于配置里，而 getConnection 对未知名字会回落到全局配置，
+     * 所以请由调用方保证「不再使用」，或在用前用 hasConnection() 自查。
+     *
+     * @param string $name 连接名称
+     * @return bool 是否真的移除了（false = 该名字本来没注册 / 请求移除的是默认连接）
+     * @example Db::removeConnection('shard_maint')
+     */
+    public static function removeConnection(string $name): bool
+    {
+        if ($name === '' || $name === self::$defaultConnection) {
+            return false;
+        }
+
+        $existed = isset(self::$connections[$name])
+            || isset(self::$connectionCache[$name])
+            || PoolManager::hasPool($name);
+
+        // 事务里还攥着这条连接：先回滚未提交的改动再释放，否则连接会被事务语义吊住
+        if (isset(self::$transactionConnections[$name])) {
+            $held = self::$transactionConnections[$name];
+            unset(self::$transactionConnections[$name]);
+            try {
+                if (method_exists($held, 'rollBack')) {
+                    $held->rollBack();
+                }
+            } catch (\Throwable) {
+            }
+            self::disconnectConnection($held);
+        }
+
+        if (isset(self::$connectionCache[$name])) {
+            self::disconnectConnection(self::$connectionCache[$name]);
+            unset(self::$connectionCache[$name]);
+        }
+        // 驱动名别名（默认连接场景会同时以 driver 名留一份）不该被这条命名连接带出来，
+        // 只在名字与配置里的 driver 同名时清理，避免误删默认连接的条目。
+        unset(self::$connections[$name]);
+
+        PoolManager::remove($name);
+
+        return $existed;
+    }
+
+    /**
+     * 断开某个底层连接（能断就断，断不掉也不影响后续解除注册）。
+     */
+    private static function disconnectConnection(mixed $connection): void
+    {
+        try {
+            if (is_object($connection) && method_exists($connection, 'disconnect')) {
+                $connection->disconnect();
+            }
+        } catch (\Throwable) {
         }
     }
 

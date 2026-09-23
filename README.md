@@ -430,6 +430,18 @@ if (Db::hasConnection('order_db')) {
     // ...
 }
 
+// 回收命名连接（与 addConnection 成对）
+// 常驻多进程运行时里，请求期临时注册的连接（建库/迁移用的维护连接等）
+// 只注册不回收，会连配置、池对象和池里已建立的 PDO 一起留在 worker 上。
+// removeConnection 按名字摘除并 close 该池（真实断开底层连接），不影响其它在用的连接；
+// 默认连接拒绝移除，返回 false；名字本来没注册时也返回 false，可据此判断是否真回收了。
+if (Db::removeConnection('shard_maint')) {
+    // 已断开并解除注册
+}
+
+// 只摘池、保留配置（少见，一般直接用它上面的 Db::removeConnection）
+PoolManager::remove('shard_maint');
+
 // 重新连接（清除连接池）
 Db::reconnect('slave');
 Db::reconnect(); // 重新连接默认连接
@@ -2223,6 +2235,8 @@ echo PoolManager::getPoolType('slave'); // single
 ```
 
 > `Db::beginTransaction()` 在单例/池化环境下均会持有同一连接直至 `commit`/`rollback` 后归还，确保事务内所有查询可见未提交写入；常驻进程请每请求结束调用 `Db::disconnect()` 清理。
+> `Db::disconnect()` / `PoolManager::clear()` 是「全清」，会连带关掉其它在用的命名连接；
+> 只想回收临时注册的那一条（建库维护连接之类）用 `Db::removeConnection($name)`。
 
 ### 进程池 (ProcessPool)
 

@@ -194,6 +194,36 @@ class PoolManager
     }
 
     /**
+     * 移除并关闭指定连接名的池（与 Db::removeConnection 配套）
+     *
+     * 常驻进程里临时注册又不管的连接名会一直占着一份池对象和其中的真实连接；
+     * clear() 是「全清」，粒度太粗，这里按名字单独摘。
+     * 已借出给协程/fiber 的连接无法按名字定位（contextPools 以 fiber id 为键），
+     * 只能等其自身归还，移除后不会再被新查询复用。
+     */
+    public static function remove(string $driver): bool
+    {
+        if ($driver === '') {
+            return false;
+        }
+
+        if (!isset(self::$pools[$driver])) {
+            unset(self::$poolTypes[$driver]);
+
+            return false;
+        }
+
+        try {
+            self::$pools[$driver]->close();
+        } catch (\Throwable) {
+            // 关不掉也要把名字摘掉，否则下次还是同一条坏连接
+        }
+        unset(self::$pools[$driver], self::$poolTypes[$driver]);
+
+        return true;
+    }
+
+    /**
      * 获取连接（协程安全）
      */
     public static function getConnection(?string $driver = null): mixed
