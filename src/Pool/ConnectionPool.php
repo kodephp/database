@@ -140,8 +140,9 @@ class ConnectionPool implements PoolInterface
 
         // Native / Fiber 非 Channel 场景：轮询等待直到 max_wait_time，避免突发 c200 快速失败
         // 对应 Swoole 分支的 Channel::pop(maxWaitTime) 语义
-        $startTime = microtime(true);
-        while (microtime(true) - $startTime < $this->maxWaitTime) {
+        // 计时用单调时钟：wall clock 被 NTP 往回拨时，microtime 版会让这里多等一整段跳变量。
+        $startTime = hrtime(true);
+        while ((hrtime(true) - $startTime) / 1e9 < $this->maxWaitTime) {
             if (!empty($this->connections)) {
                 $connection = array_pop($this->connections);
                 $this->inUseConnections[spl_object_hash($connection)] = time();

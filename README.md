@@ -5,7 +5,7 @@
 
 ## 版本自述
 
-本包版本可由类常量核对：`Kode\Database\Db\Db::VERSION`，或调用 `Db::version()`（当前 `1.21.0`）。
+本包版本可由类常量核对：`Kode\Database\Db\Db::VERSION`，或调用 `Db::version()`（当前 `1.23.0`）。
 
 `composer.json` 的 `version` 字段是 composer 侧的权威值，类常量是它的交叉核对副本——`tests/VersionGuardTest.php` 在两者不一致时直接失败，杜绝「tag 打了、常量忘改」的漂移。
 
@@ -281,6 +281,8 @@ $migrator = new Migrator(__DIR__ . '/database/migrations');
 $ran = $migrator->run();
 // 只跑接下来的 1 步
 $migrator->run(1);
+// 预演：真跑一遍 up()，随后整体回滚
+$migrator->pretend();
 // 回滚最近一个批次
 $migrator->rollback();
 // 回滚全部
@@ -288,6 +290,23 @@ $migrator->reset();
 ```
 
 > 迁移文件名建议以时间戳前缀命名（如 `2024_01_01_000000_xxx.php`），运行器会按文件名升序执行。
+
+### 预演（pretend）
+
+`pretend(?int $steps = null)` 与 `run()` 走同一条路径：开一个事务，逐个真跑 `up()` 并写 `migrations` 记账，
+最后整体 `rollBack()` —— 库里什么都不会留下，批次号也不推进。它是「真跑一遍再看会不会报错」，
+不是把 SQL 打印出来（查询日志有条数上限，一份被静默截断的「将要执行的语句」清单比没有清单更危险）。
+
+边界（决定这功能能信到什么程度）：
+
+- **PostgreSQL / SQLite 才有意义**：DDL 在事务里可回滚。MySQL 的 DDL 隐式提交，回滚救不了已建的表。
+- 迁移体内若有跨连接写（自己 `Db::` 到别的连接）、文件读写、外部调用，这些不受本事务保护。
+- `migrations` 记账表若不存在会被建出来，预演同样留着它。
+- `Migrator` 构造时给定的连接名全程生效（`Db::` 门面走默认连接，所以运行期会临时把默认连接切过去，结束再还原）。
+  把迁移打到 A 库、却在 B 库上看到新表这类事故由此堵住。
+```php
+$migrator = new Migrator(__DIR__ . '/database/migrations', 'pgsql_read_write_target');
+```
 
 ### 跨数据库（方言自适应）
 
@@ -442,9 +461,11 @@ if (Db::removeConnection('shard_maint')) {
 // 只摘池、保留配置（少见，一般直接用它上面的 Db::removeConnection）
 PoolManager::remove('shard_maint');
 
-// 重新连接（清除连接池）
-Db::reconnect('slave');
-Db::reconnect(); // 重新连接默认连接
+// 重新连接默认连接（断开底层连接、保留配置，下一次查询自动重连）。
+// 注意签名不接受连接名：传参不会报错，但会被静默丢弃，别写成 Db::reconnect('slave')。
+Db::reconnect();
+// 要按名字回收某条连接，用 removeConnection（连配置一起摘掉）
+Db::removeConnection('pgsql_read');
 ```
 
 ### 切换数据库
@@ -1094,6 +1115,9 @@ $logs = Db::getQueryLog();  // 最近最多 Db::QUERY_LOG_LIMIT 条
 Db::clearQueryLog();        // 清空日志与「最后一条 SQL」
 Db::getLastSql();           // 最后执行的一条 SQL
 ```
+
+> 计时用 `hrtime()`（单调、纳秒），不用 `microtime(true)`：后者是挂钟，NTP 校时会让耗时变成负数，
+> 微秒粒度下快查询还会记成 `time = 0.0`，慢查询阈值判断随之失效。连接池的 `max_wait_time` 等待同样按单调钟计时。
 
 每条日志的结构：
 

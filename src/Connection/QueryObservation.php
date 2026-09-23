@@ -65,17 +65,19 @@ trait QueryObservation
 
         $keys = $this->connectionName() === null ? ['*'] : ['*', $this->connectionName()];
         [$sql, $bindings] = DbConnection::fireBeforeQuery($keys, $sql, $bindings, $this);
-        $started = microtime(true);
+        // 单调时钟：microtime(true) 跟着系统走时跳（NTP 校时/手动改表会让耗时变负），
+        // 且只有微秒粒度 —— 本地毫秒级查询会撞上同一个 tick，耗时记成 0。
+        $started = hrtime(true);
 
         try {
             $result = $execute($sql, $bindings);
         } catch (Throwable $e) {
-            $this->report($sql, $bindings, microtime(true) - $started, $e, $keys);
+            $this->report($sql, $bindings, (hrtime(true) - $started) / 1e9, $e, $keys);
 
             throw $e;
         }
 
-        $this->report($sql, $bindings, microtime(true) - $started, $result, $keys);
+        $this->report($sql, $bindings, (hrtime(true) - $started) / 1e9, $result, $keys);
 
         return $result;
     }

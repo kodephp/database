@@ -94,9 +94,9 @@ class ProcessPool implements PoolInterface
             return $this->connector->connect($this->config);
         }
 
-        // 达到上限，进入等待队列轮询等待
-        $startTime = microtime(true);
-        while (microtime(true) - $startTime < $this->maxWaitTime) {
+        // 达到上限，进入等待队列轮询等待（单调时钟，理由同 ConnectionPool）
+        $startTime = hrtime(true);
+        while ((hrtime(true) - $startTime) / 1e9 < $this->maxWaitTime) {
             // 检查是否有连接被释放回池
             if (!empty($this->processConnections)) {
                 $this->inUseCount++;
