@@ -2,6 +2,13 @@
 
 轻量级数据库适配器，**ORM 无关设计**：可自由选用 Laravel / ThinkPHP / Symfony(Doctrine) / Hyperf ORM，亦可零依赖直接基于内置 PDO 执行器运行，支持 **多进程、多线程、协程** 环境下的数据库操作。
 
+
+## 版本自述
+
+本包版本可由类常量核对：`Kode\Database\Db\Db::VERSION`，或调用 `Db::version()`（当前 `1.21.0`）。
+
+`composer.json` 的 `version` 字段是 composer 侧的权威值，类常量是它的交叉核对副本——`tests/VersionGuardTest.php` 在两者不一致时直接失败，杜绝「tag 打了、常量忘改」的漂移。
+
 ## 特性
 
 - **ORM 无关（自由选择）**：不锁定任何 ORM。开发者安装 Laravel / ThinkPHP / Symfony / Hyperf 中任意一个即可，连接器会自动桥接其连接管理器；未安装任何 ORM 时自动回退到内置 PDO 执行器，开箱即用
