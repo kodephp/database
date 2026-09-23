@@ -5,7 +5,7 @@
 
 ## 版本自述
 
-本包版本可由类常量核对：`Kode\Database\Db\Db::VERSION`，或调用 `Db::version()`（当前 `1.23.0`）。
+本包版本可由类常量核对：`Kode\Database\Db\Db::VERSION`，或调用 `Db::version()`（当前 `1.24.0`）。
 
 `composer.json` 的 `version` 字段是 composer 侧的权威值，类常量是它的交叉核对副本——`tests/VersionGuardTest.php` 在两者不一致时直接失败，杜绝「tag 打了、常量忘改」的漂移。
 
@@ -17,7 +17,7 @@
 - **多数据库支持**：主从、读写分离自动路由、跨库关联查询
 - **分库分表**：按年月、按哈希、按后缀、范围映射、自动路由
 - **连接池管理**：协程上下文隔离，支持 Fiber；无池时自动退化为单连接（`single`），零配置也能保证事务原子性
-- **常驻内存优化**：内置 PDO 执行器支持预编译语句缓存（上限 256，按 SQL 文本复用 PDOStatement）、惰性断连重试（失效由 PDOException 暴露、捕获后重连重试一次）、免去每查一次 SELECT 1 探活，显著降低常驻内存场景下的 DB 往返
+- **常驻内存优化**：内置 PDO 执行器支持预编译语句缓存（上限 256，按 SQL 文本复用 PDOStatement）、惰性断连重试（失效由 PDOException 暴露、捕获后重连重试一次，含 pgsql 的 `HY000` 断链识别；事务中途断链不重放，口径见「断链识别与自动重连」）、免去每查一次 SELECT 1 探活，显著降低常驻内存场景下的 DB 往返
 - **查询观测**：查询日志、前后查询钩子、`SqlEvent` 三条 API 统一挂在执行器切面上（含真实耗时、连接名与失败异常），内置 PDO 执行器和四个 ORM 桥接器同一口径
 - **事件监听**：SQL 事件已接线，模型事件另有钩子体系；事务事件类尚无派发点（见「事件监听」一节）
 - **Schema 定义**：表结构构建器
@@ -2143,6 +2143,57 @@ EventManager::getInstance()->listen(null, MySqlListener::class); // 类不存在
 `TransactionBeginEvent` / `TransactionCommitEvent` / `TransactionRollbackEvent` 三个类**目前没有包内派发点**：
 注册监听不会收到回调。事务由各执行器与底层 ORM 自行管理（Laravel / Hyperf 各自维护嵌套层级），
 层级口径还没统一，所以先不硬派。要观测事务，暂用 `SqlEvent` 之外自行埋点，或等后续版本接线。
+
+---
+
+## 断链识别与自动重连（内置 PDO 执行器）
+
+常驻内存下连接会被外部杀掉：笔记本睡眠、`pg_terminate_backend`、防火墙/服务端的空闲超时、数据库重启。
+`PdoConnection` 的策略是**惰性自愈**：不发探活查询，失效由执行语句时抛出的 `PDOException` 暴露，
+判定为「连接类故障」时丢弃句柄、在新连接上重放一次。
+
+判定按驱动分流（`isConnectionFailure()`）：
+
+| 口径 | 覆盖 |
+| --- | --- |
+| SQLSTATE `08xxx` / `HYT00` / `HYT01` | 全部驱动的 connection exception 与超时 |
+| 驱动码 ∈ `RETRYABLE_DRIVER_CODES` | MySQL 的 gone away / 服务不可达（`2002/2003/2006/2013/2045/2101`） |
+| **仅 pgsql**：SQLSTATE `HY000` / `57P01` / `57P02` / `57P03` | 后端被终止、服务端关机、暂不可连 |
+
+第三行是 pgsql 专属的，原因是 **pdo_pgsql 对所有错误都回吐驱动码 7**（业务错误也一样），
+MySQL 那套驱动码在 pgsql 上完全不命中；而它把断链报成 `SQLSTATE[HY000]`（"server closed the
+connection unexpectedly" / "no connection to the server"），不在 `08xxx` 类里。缺了这条，
+pgsql 上的断链**永远不会进重连分支** —— worker 一旦遇到后端被杀，之后每条 SQL 都永久报错，
+直到重启整个服务（而 CLI 侧用同一份配置新建连接却完全正常，最具迷惑性）。
+
+这条判据之所以敢按 `HY000` 认，是因为实测 pgsql 的业务错误一律带真实 SQLSTATE，不落 `HY000`：
+`42P01` 表不存在 / `42601` 语法 / `42703` 字段 / `22012` 除零 / `22P02` 转换 / `22001` 超长 /
+`23505`·`23503`·`23502` 约束 / `25P02` 事务已中止 / `57014` 语句超时取消。逐条断言见
+`tests/PdoConnectionRetryTest.php`。
+
+**驱动门控不能省**：pdo_sqlite 把「表不存在/语法错」也报成 `HY000`（驱动码 1），
+若全局认 `HY000`，sqlite 上每条业务错误都会白白断连重放一次。
+
+### 与事务的边界
+
+- **事务中途断链不自动重放**：新连接上没有 `BEGIN`，剩余语句会脱离事务逐条自动提交，
+  且外层 `rollBack()` 因 `inTransaction()` 已为 false 而空转 —— 原子单元静默变成「半提交」。
+  所以 `transactionLevel > 0` 时一律原样抛出，让调用方的事务边界失败。
+- **`rollBack()` 吞掉连接级异常**：调用方通常在 `catch` 里回滚，让 `"no connection to the server"`
+  冒泡会盖掉真正的失败原因；后端已经没了，回滚本来也无事可做。吞掉的同时丢弃死句柄。
+  非连接类的回滚错误照常抛出。`commit()` **不做**同样处理 —— 提交没成功必须让调用方知道。
+- **`beginTransaction()` 自带重连**：事务型请求发的第一条语句就是 `BEGIN`，若它不做断连重连，
+  后面所有事务型请求都会停在裸错误上（`retryOnce` 根本轮不到），pgsql 又回到「一旦断链就起不来」。
+  空事务重放没有副作用。嵌套事务（level > 0）不重复发 `BEGIN`。
+
+### 重放语义
+
+至多重试一次、且只在新连接上执行，因此本路径是 **at-least-once**：断链前的写入是否已被服务端
+提交无法得知，不幂等的写请求仍可能重复。这是相对「永不重连（整个进程砖化）」的取舍，
+业务侧对关键写入请自带幂等键。
+
+真机验证（终止自己的后端后查询/开事务）见 `tests/PdoConnectionRetryTest.php` 的分类与重放断言；
+形状取自 pdo_pgsql 实连回吐的 `errorInfo`。
 
 ---
 

@@ -43,6 +43,14 @@ class PdoConnection implements ExecutorInterface
     /** 可重试的驱动层错误码（断链/服务不可达，重连后重试有意义） */
     private const RETRYABLE_DRIVER_CODES = [2002, 2003, 2006, 2013, 2045, 2101];
 
+    /**
+     * pdo_pgsql 的连接级故障 SQLSTATE
+     *
+     * HY000 是 libpq 层错误（后端被终止、服务端关闭连接、连接已不存在）的唯一落点；
+     * 57P01/57P02/57P03 是服务端 FATAL（管理员关机/崩溃关机/暂不可连），三类一律终结会话。
+     */
+    private const PGSQL_CONNECTION_SQLSTATES = ['HY000', '57P01', '57P02', '57P03'];
+
     protected array $config;
     protected ?PDO $pdo = null;
     protected int $transactionLevel = 0;
@@ -105,21 +113,33 @@ class PdoConnection implements ExecutorInterface
     }
 
     /**
-     * 根据配置构建 PDO DSN
+     * 解析本连接实际使用的 PDO 驱动名（mysql / pgsql / sqlite / sqlsrv / oci）
      *
      * 数据库类型解析优先级：pdo_driver（显式）> database_driver（规范化）> driver（兼容旧写法）。
-     * 这样即便 driver 被用作 ORM 连接器选择器（如 'pdo'），也能正确生成目标数据库 DSN，
-     * 使内置 PDO 执行器支持 mysql / pgsql / sqlite / sqlsrv / oracle 全部数据库。
+     * 这样即便 driver 被用作 ORM 连接器选择器（如 'pdo'），也能正确识别目标数据库。
+     * buildDsn() 与连接故障判定共用本方法，避免两处口径漂移。
+     */
+    protected function pdoDriver(): string
+    {
+        $dbType = strtolower(
+            (string) ($this->config['pdo_driver']
+                ?? $this->config['database_driver']
+                ?? $this->config['driver']
+                ?? 'mysql')
+        );
+
+        return self::PDO_DRIVERS[$dbType] ?? 'mysql';
+    }
+
+    /**
+     * 根据配置构建 PDO DSN
+     *
+     * 驱动名解析见 {@see pdoDriver()}；内置 PDO 执行器支持
+     * mysql / pgsql / sqlite / sqlsrv / oracle 全部数据库。
      */
     protected function buildDsn(): string
     {
-        $dbType = strtolower(
-            $this->config['pdo_driver']
-            ?? $this->config['database_driver']
-            ?? $this->config['driver']
-            ?? 'mysql'
-        );
-        $pdoDriver = self::PDO_DRIVERS[$dbType] ?? 'mysql';
+        $pdoDriver = $this->pdoDriver();
         $charset = $this->config['charset'] ?? 'utf8mb4';
 
         return match ($pdoDriver) {
@@ -179,12 +199,33 @@ class PdoConnection implements ExecutorInterface
      *
      * SQL 语法错误、约束冲突等业务性错误重放一次只会重复失败并白白丢弃连接，
      * 因此不再对任意 PDOException 盲目重试。
+     *
+     * $driver 为本连接的 PDO 驱动名（见 {@see pdoDriver()}）；留空则跳过驱动专属判定，
+     * 保持只按 SQLSTATE 08xxx / 超时 / MySQL 驱动码的旧口径。
      */
-    protected static function isConnectionFailure(PDOException $e): bool
+    protected static function isConnectionFailure(PDOException $e, string $driver = ''): bool
     {
         $sqlState = (string) ($e->errorInfo[0] ?? $e->getCode());
         // SQLSTATE 08xxx = connection exception；HYT00/HYT01 = 超时
         if (str_starts_with($sqlState, '08') || $sqlState === 'HYT00' || $sqlState === 'HYT01') {
+            return true;
+        }
+
+        // pdo_pgsql 对**所有**错误回吐驱动码 7（业务错误也一样），所以上面那套 MySQL
+        // 驱动码在 pgsql 上完全失效；而它把「后端被终止/服务端关闭连接」报成 SQLSTATE
+        // HY000，不在 08xxx 类里。两条路都走不通，于是断链永不进重连分支：常驻 worker
+        // 只要遇到笔记本睡眠 / pg_terminate_backend / 空闲超时杀连接，之后每条 SQL 都
+        // 永久抛错直到重启整个服务（CLI 侧同配置新建连接却正常，最具迷惑性）。
+        // 实测同实例：pgsql 的业务错误一律带真实 SQLSTATE（42P01/42601/42703/22012/
+        // 22P02/23505/23503/23502/22001/57014/25P02），不会落进 HY000，故可按驱动判定。
+        //
+        // 门控必须是驱动名而不是直接全局认 HY000：pdo_sqlite 把「表不存在/语法错」也
+        // 报成 HY000（实测驱动码 1），全局放行会让 sqlite 每条业务错误都白断连重放一次。
+        //
+        // 重放语义与 MySQL 路径一致：至多重试一次，且只在新连接上执行。断链前的写入
+        // 是否已被服务端提交无法得知，所以本路径是 at-least-once，不幂等的写请求仍可能
+        // 重复——这是「永不重连（整进程砖化）」的取舍，业务侧靠幂等键自行兜底。
+        if ($driver === 'pgsql' && in_array($sqlState, self::PGSQL_CONNECTION_SQLSTATES, true)) {
             return true;
         }
 
@@ -194,6 +235,10 @@ class PdoConnection implements ExecutorInterface
     /**
      * 执行一次 SQL，连接类故障时断连重试一次（非连接类故障直接抛出，不重复执行）。
      *
+     * 事务中途断链**不自动重连**：新连接上没有 BEGIN，剩余语句会被逐条自动提交，
+     * 且外层 rollBack() 因 PDO inTransaction() 为 false 而空转 —— 静默把原子单元
+     * 变成「半提交」。这种情况原样抛出，让调用方的事务边界失败。
+     *
      * @param callable(): mixed $execute
      */
     protected function retryOnce(callable $execute): mixed
@@ -201,7 +246,7 @@ class PdoConnection implements ExecutorInterface
         try {
             return $execute();
         } catch (PDOException $e) {
-            if (!self::isConnectionFailure($e)) {
+            if ($this->transactionLevel > 0 || !self::isConnectionFailure($e, $this->pdoDriver())) {
                 throw $e;
             }
             $this->disconnect();
@@ -288,7 +333,19 @@ class PdoConnection implements ExecutorInterface
             $this->transactionLevel = 0;
         }
         if ($this->transactionLevel === 0) {
-            $pdo->beginTransaction();
+            // BEGIN 必须自己具备重连能力：事务型请求的第一条语句就是 BEGIN，若它不做
+            // 断连重试，「断链之后的第一个事务」会永久停在裸错误上（retryOnce 那套判定
+            // 根本轮不到），常驻 worker 又回到「一旦断链就再也起不来」的状态。
+            // 空事务重放没有副作用，因此这里是安全的。
+            try {
+                $pdo->beginTransaction();
+            } catch (PDOException $e) {
+                if (!self::isConnectionFailure($e, $this->pdoDriver())) {
+                    throw $e;
+                }
+                $this->disconnect();
+                $this->ensureConnected()->beginTransaction();
+            }
         }
         $this->transactionLevel++;
     }
@@ -313,7 +370,20 @@ class PdoConnection implements ExecutorInterface
             $this->transactionLevel--;
         }
         if ($this->transactionLevel === 0 && $this->pdo !== null && $this->pdo->inTransaction()) {
-            $this->pdo->rollBack();
+            // 断链后的 rollBack 一定失败（后端已经没了，事务也随进程一起没了）。
+            // 这里必须吞掉「连接级」异常并丢弃死句柄：调用方通常在 catch 里回滚，
+            // 让 rollBack 的二次异常冒泡会盖掉真正的失败原因，只留一句
+            // "no connection to the server"，故障现场无从定位。
+            // commit 不做同样处理——提交没成功必须让调用方知道。
+            try {
+                $this->pdo->rollBack();
+            } catch (PDOException $e) {
+                if (!self::isConnectionFailure($e, $this->pdoDriver())) {
+                    throw $e;
+                }
+                // 只在真的丢弃句柄时清缓存：回滚成功是热路径，不能顺手把连接和语句缓存扔掉
+                $this->disconnect();
+            }
         }
     }
 
