@@ -785,6 +785,29 @@ class Schema
     }
 
     /**
+     * 设置字段为 NOT NULL
+     *
+     * 与 `nullable()` 成对。此前建表器**没有任何**途径能表达非空（除了主键）：
+     * 迁移建出的列一律可空，而手写的 `database/sql/schema.sql` 里同一列写着 NOT NULL，
+     * 于是「照 schema.sql 装库」与「照迁移链装库」得到两座形状不同的库。
+     *
+     * @return $this
+     * @example $t->string('email', 128)->notNull()->default('')
+     */
+    public function notNull(): static
+    {
+        if (empty($this->columns)) {
+            return $this;
+        }
+
+        $lastColumn = end($this->columns);
+        if ($lastColumn instanceof Column) {
+            $lastColumn->setNullable(false);
+        }
+        return $this;
+    }
+
+    /**
      * 设置字段为无符号
      *
      * @return $this

@@ -20,6 +20,13 @@ class Column
 
     public function __construct(string $name, string $type, array $options = [])
     {
+        // `nullable` 与 `not_null` 说的是同一件事，但两个键的历史上传者都有（Schema 的
+        // 类型助手传 `nullable`，addColumn 的调用方按直觉传 `not_null` 或 `nullable`），
+        // 而 toSql() 只读 `not_null` —— 于是 `['nullable' => false]` 被当成死配置，
+        // 作者以为收紧了，DDL 里那个列仍然是可空的。进门先归一成一个键。
+        if (array_key_exists('nullable', $options) && !array_key_exists('not_null', $options)) {
+            $options['not_null'] = !($options['nullable'] ?? false);
+        }
         $this->name = $name;
         $this->type = $type;
         $this->options = $options;
@@ -106,6 +113,10 @@ class Column
             'mediumint' => 'mediumint',
             'tinyint' => 'tinyint',
             'varchar' => 'varchar(' . ($this->options['length'] ?? 255) . ')',
+            // `string` 是 `addColumn($name, $type)` 那条路上调用方会写的词（`Schema::table()` 的
+            // @example 自己就这么写），而助手方法 `string()` 内部传的是 `varchar`。
+            // 只认后者时，前者会原样落进 DDL 变成 `ADD x string` —— 一句语法错误的建列语句。
+            'string' => 'varchar(' . ($this->options['length'] ?? 255) . ')',
             'char' => 'char(' . ($this->options['length'] ?? 255) . ')',
             'text' => 'text',
             'mediumtext' => 'mediumtext',
@@ -172,12 +183,14 @@ class Column
 
     /**
      * 设置 nullable
+     *
+     * 必须两个方向都落：`setNullable(false)` 是「这个列不许为空」的唯一收紧入口。
+     * 此前它只在 true 分支写值，false 是空操作，于是「收紧」在整个建表器里没有任何
+     * API 能表达（除主键），NOT NULL 的列全要靠手写 DDL 才建得出来。
      */
     public function setNullable(bool $nullable = true): void
     {
-        if ($nullable) {
-            $this->options['not_null'] = false;
-        }
+        $this->options['not_null'] = !$nullable;
     }
 
     /**

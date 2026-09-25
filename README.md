@@ -5,7 +5,7 @@
 
 ## 版本自述
 
-本包版本可由类常量核对：`Kode\Database\Db\Db::VERSION`，或调用 `Db::version()`（当前 `1.24.0`）。
+本包版本可由类常量核对：`Kode\Database\Db\Db::VERSION`，或调用 `Db::version()`（当前 `1.25.0`）。
 
 `composer.json` 的 `version` 字段是 composer 侧的权威值，类常量是它的交叉核对副本——`tests/VersionGuardTest.php` 在两者不一致时直接失败，杜绝「tag 打了、常量忘改」的漂移。
 
@@ -335,6 +335,34 @@ Schema::create('users', function (Schema $t) {
 
 > 类型也随方言调整（如 `boolean` 在 pgsql 为 `boolean`、sqlite 为 `integer`、sqlsrv 为 `bit`），
 > 因此同一份迁移脚本可在不同数据库上执行。
+
+### 列约束：NOT NULL 与默认值
+
+列**默认可空**（保持与历史迁移一致：翻转默认会让存量迁移的插入从成功变 23502）。
+要收紧就显式写 `notNull()`，它与 `nullable()` 成对，可链式反复：
+
+```php
+$t->string('email', 191)->notNull();                 // email varchar(191) NOT NULL
+$t->string('status', 16)->notNull()->default('new'); // ... NOT NULL DEFAULT 'new'
+$t->string('memo', 64)->notNull()->nullable();       // 退回可空
+// 等价的选项写法（`nullable` 与 `not_null` 两个键都认）：
+$t->addColumn('code', 'string', ['length' => 32, 'nullable' => false]);
+```
+
+`default()` 只对**字面量**有效：字符串会被加引号，数字原样输出。
+函数/表达式默认值不支持——`->default('now()')` 会生成 `DEFAULT 'now()'`（一个文本常量，
+时间列上直接报错或被截成奇怪的值），而不是 `DEFAULT now()`。需要函数默认值时写裸 DDL：
+
+```php
+Db::statement("ALTER TABLE t ALTER COLUMN created_at SET DEFAULT NOW()");
+```
+
+> v1.25.0 起 `notNull()` 才真实落地。此前建表器**没有任何**途径能表达非空（除主键）：
+> `setNullable(false)` 是空操作，`Schema` 上只有「放宽」方向的 `nullable()`，
+> 而 `timestamps()` 一类助手传的 `['nullable' => true]` 是 `Column::toSql()` 从不读取的死键。
+> 后果是「手写的全量建表脚本」与「迁移链建出的库」在非空/默认值上系统性分叉。
+> 同版本起 `addColumn($name, 'string', …)` 会解析成 `varchar(length)`；
+> 此前 `string` 原样进 DDL，产出的是一句语法错误的 `ADD x string`。
 
 ---
 
