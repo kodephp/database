@@ -5,7 +5,7 @@
 
 ## 版本自述
 
-本包版本可由类常量核对：`Kode\Database\Db\Db::VERSION`，或调用 `Db::version()`（当前 `1.25.0`）。
+本包版本可由类常量核对：`Kode\Database\Db\Db::VERSION`，或调用 `Db::version()`（当前 `1.26.0`）。
 
 `composer.json` 的 `version` 字段是 composer 侧的权威值，类常量是它的交叉核对副本——`tests/VersionGuardTest.php` 在两者不一致时直接失败，杜绝「tag 打了、常量忘改」的漂移。
 
@@ -2222,6 +2222,34 @@ pgsql 上的断链**永远不会进重连分支** —— worker 一旦遇到后�
 
 真机验证（终止自己的后端后查询/开事务）见 `tests/PdoConnectionRetryTest.php` 的分类与重放断言；
 形状取自 pdo_pgsql 实连回吐的 `errorInfo`。
+
+---
+
+## 绑定参数的类型（内置 PDO 执行器）
+
+`Db::select/insert/update/delete/statement()` 与查询构建器最终都走同一个绑定派发口
+（`PdoConnection::bindAll()`）：位置参数按 1 起编号、命名参数按名字绑，
+并且**按 PHP 值的类型声明 PDO 参数类型** —— 只有 `bool` 与 `null` 需要声明，
+其余一律 `PDO::PARAM_STR`（与历史行为逐字节相同，含整数、浮点、`__toString` 对象）。
+
+> v1.26.0 起才这样。此前五条语句路径都是 `$stmt->execute($bindings)`，
+> 那条 API 把数组里**每个值都按字符串**绑，于是 PHP 的 `false` 变成空串 `''`：
+> - pgsql：写 boolean 列（`INSERT ... VALUES (?)` / `UPDATE ... SET enabled = ?`）
+>   与 `WHERE flag = ?` 一律 `SQLSTATE[22P02] 无效的类型 boolean 输入语法: ""`。
+>   **任何把布尔列写成 false 的语句必然失败**，而 `true` 侥幸能过
+>   （`(string) true === '1'` 是 pgsql 接受的 boolean 字面量），
+>   所以症状是「新建正常、一关就 500」——看起来像业务 bug，不是绑定 bug。
+> - sqlite：不报错，但存进去的是文本 `''`（`typeof()` = `text`）而不是 0，
+>   于是同一份代码在两种方言下落两种值。
+
+`null` 显式声明为 `PDO::PARAM_NULL`（结果与旧行为相同：PDO 对 PHP null 一律绑 SQL NULL，
+只是把意图写进类型里）。
+
+一个坑值得单说：**语句是缓存复用的**（`prepareStatement()`，上限 256 条），
+`bindValue()` 的值会留到下一次 `execute()`。所以「这条 SQL 这次没带某个参数」不等于
+「那个占位符还是空的」——每次调用都必须把全部参数重新绑一遍，缺一个就会用上一次的残值。
+回归见 `tests/BindingTypesTest.php`（含 false 落列、false 作 WHERE 条件、复用语句三次不串值、
+以及 (位置, 值, 类型) 三元组的逐条断言）。
 
 ---
 

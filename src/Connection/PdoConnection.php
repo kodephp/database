@@ -195,6 +195,38 @@ class PdoConnection implements ExecutorInterface
     }
 
     /**
+     * 把绑定值逐个交给语句，并**按值的类型声明参数类型** —— 全类唯一的绑定派发口。
+     *
+     * 为什么不用 `PDOStatement::execute($bindings)`：那条路把数组里每个值都按
+     * `PDO::PARAM_STR` 绑定，于是 PHP 的 `false` 变成空串 `''`。
+     * pgsql 上（实测）`INSERT ... VALUES (?)` / `UPDATE ... SET enabled = ?` / `WHERE flag = ?`
+     * 绑 `false` 一律 `SQLSTATE[22P02] 无效的类型 boolean 输入语法: ""` ——
+     * **任何把布尔列写成 false 的语句必然失败**。而 `true` 侥幸能过
+     * （`(string) true === '1'` 是 pgsql 接受的 boolean 字面量），所以症状是
+     * 「新建正常、一关就 500」，看起来像业务 bug 而不是绑定 bug。
+     * sqlite 不报错，但存进去的是文本空串（`typeof()` = `text`）而不是 0。
+     *
+     * 只有 bool 与 null 需要声明：其余类型走 `PARAM_STR`，与旧行为逐字节相同
+     * （包括整数、浮点、以及对象按 `__toString` 转换的那一类）。
+     * 命名参数（`:name` 键）保持按名字绑，位置参数按 1 起编号。
+     *
+     * @param array<string|int, mixed> $bindings
+     */
+    protected static function bindAll(PDOStatement $stmt, array $bindings): void
+    {
+        $position = 1;
+        foreach ($bindings as $key => $value) {
+            $param = is_int($key) ? $position++ : $key;
+            $type = match (true) {
+                $value === null => PDO::PARAM_NULL,
+                is_bool($value) => PDO::PARAM_BOOL,
+                default => PDO::PARAM_STR,
+            };
+            $stmt->bindValue($param, $value, $type);
+        }
+    }
+
+    /**
      * 判断 PDOException 是否为连接类故障（只有这类才值得断连重试）
      *
      * SQL 语法错误、约束冲突等业务性错误重放一次只会重复失败并白白丢弃连接，
@@ -261,7 +293,8 @@ class PdoConnection implements ExecutorInterface
         return $this->observe($sql, $bindings, function (string $sql, array $bindings): array {
             return $this->retryOnce(function () use ($sql, $bindings): array {
                 $stmt = $this->prepareStatement($sql);
-                $stmt->execute($bindings);
+                self::bindAll($stmt, $bindings);
+                $stmt->execute();
 
                 return $stmt->fetchAll(PDO::FETCH_ASSOC);
             });
@@ -274,7 +307,8 @@ class PdoConnection implements ExecutorInterface
         return $this->observe($sql, $bindings, function (string $sql, array $bindings): int|string {
             return $this->retryOnce(function () use ($sql, $bindings): int|string {
                 $stmt = $this->prepareStatement($sql);
-                $stmt->execute($bindings);
+                self::bindAll($stmt, $bindings);
+                $stmt->execute();
 
                 return $this->ensureConnected()->lastInsertId();
             });
@@ -287,7 +321,8 @@ class PdoConnection implements ExecutorInterface
         return $this->observe($sql, $bindings, function (string $sql, array $bindings): int {
             return $this->retryOnce(function () use ($sql, $bindings): int {
                 $stmt = $this->prepareStatement($sql);
-                $stmt->execute($bindings);
+                self::bindAll($stmt, $bindings);
+                $stmt->execute();
 
                 return $stmt->rowCount();
             });
@@ -300,7 +335,8 @@ class PdoConnection implements ExecutorInterface
         return $this->observe($sql, $bindings, function (string $sql, array $bindings): int {
             return $this->retryOnce(function () use ($sql, $bindings): int {
                 $stmt = $this->prepareStatement($sql);
-                $stmt->execute($bindings);
+                self::bindAll($stmt, $bindings);
+                $stmt->execute();
 
                 return $stmt->rowCount();
             });
@@ -314,7 +350,8 @@ class PdoConnection implements ExecutorInterface
             // 走 prepare/execute 以支持占位符绑定；无绑定参数时与原 exec 行为等价
             return $this->retryOnce(function () use ($sql, $bindings): bool {
                 $stmt = $this->prepareStatement($sql);
-                $stmt->execute($bindings);
+                self::bindAll($stmt, $bindings);
+                $stmt->execute();
 
                 return true;
             });
