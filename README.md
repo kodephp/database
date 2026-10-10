@@ -31,7 +31,7 @@
 
 ## 环境要求
 
-- **PHP >= 8.3**（已使用 typed constants、`#[Override]`、`json_validate`、readonly 值对象等现代特性）
+- **PHP >= 8.4**（已使用 typed constants、`#[Override]`、`json_validate`、readonly 值对象等现代特性）
 - 依赖 `ext-pdo`
 - 兼容 Swoole、Workerman、RoadRunner 等常驻内存环境
 
