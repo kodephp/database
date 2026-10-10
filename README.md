@@ -2713,4 +2713,4 @@ throw DatabaseException::sql('SELECT * FROM users', [], 'Custom error message');
 
 ## License
 
-Apache-2.0
+[Apache License 2.0](LICENSE)
