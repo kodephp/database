@@ -40,7 +40,7 @@ class Schema
     /** @var string 全局默认方言（由迁移运行器按实际连接设置） */
     protected static string $defaultDriver = 'mysql';
 
-    public function __construct(string $table, string $driver = null)
+    public function __construct(string $table, ?string $driver = null)
     {
         $this->table = $table;
         $this->driver = strtolower($driver ?? self::$defaultDriver);
@@ -71,7 +71,7 @@ class Schema
      * @return string SQL 语句
      * @example Schema::create('users', function ($t) { $t->id(); $t->string('name'); })
      */
-    public static function create(string $table, callable $callback, string $driver = null): string
+    public static function create(string $table, callable $callback, ?string $driver = null): string
     {
         $schema = new self($table, $driver);
         $callback($schema);
@@ -87,7 +87,7 @@ class Schema
      * @return string SQL 语句
      * @example Schema::table('users', function ($t) { $t->addColumn('phone', 'string', ['length' => 11]); })
      */
-    public static function table(string $table, callable $callback, string $driver = null): string
+    public static function table(string $table, callable $callback, ?string $driver = null): string
     {
         $schema = new self($table, $driver);
         $callback($schema);
@@ -112,7 +112,7 @@ class Schema
      * @param string|null $driver 数据库方言
      * @return string SQL 语句
      */
-    public static function hasTable(string $table, string $driver = null): string
+    public static function hasTable(string $table, ?string $driver = null): string
     {
         $driver = strtolower($driver ?? self::$defaultDriver);
 
@@ -132,7 +132,7 @@ class Schema
      * @param string|null $driver 数据库方言
      * @return string SQL 语句
      */
-    public static function hasColumn(string $table, string $column, string $driver = null): string
+    public static function hasColumn(string $table, string $column, ?string $driver = null): string
     {
         $driver = strtolower($driver ?? self::$defaultDriver);
 
@@ -890,7 +890,7 @@ class Schema
      * @param array|string|null $columns 字段名
      * @return $this
      */
-    public function primary(array|string $columns = null): static
+    public function primary(array|string|null $columns = null): static
     {
         if ($columns !== null) {
             $columns = is_array($columns) ? $columns : [$columns];

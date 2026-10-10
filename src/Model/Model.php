@@ -693,7 +693,7 @@ abstract class Model implements ArrayAccess, JsonSerializable
      * @param int|string|null $shardingKey 分片键
      * @return string 实际表名
      */
-    public function getShardingTable(int|string $shardingKey = null): string
+    public function getShardingTable(int|string|null $shardingKey = null): string
     {
         if ($shardingKey === null) {
             $shardingKey = $this->shardingKey;
