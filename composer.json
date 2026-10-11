@@ -3,7 +3,11 @@
     "description": "轻量级数据库适配器，ORM 无关设计：可自由选用 Laravel / ThinkPHP / Symfony(Doctrine) / Hyperf ORM，支持多数据库连接、读写分离、分库分表、连接池、协程、事件监听、Schema 与迁移",
     "type": "library",
     "license": "Apache-2.0",
-    "version": "2.0.1",
+    "version": "2.0.2",
+    "support": {
+        "issues": "https://github.com/kodephp/database/issues",
+        "source": "https://github.com/kodephp/database"
+    },
     "autoload": {
         "psr-4": {
             "Kode\\Database\\": "src/"
@@ -28,6 +32,7 @@
         "phpunit/phpunit": "^10.0 || ^11.0"
     },
     "suggest": {
+        "ext-swoole": "Swoole 扩展 - 用于协程连接池加速",
         "illuminate/database": "Laravel ORM（illuminate/database 或 laravel/framework），driver=laravel 时使用其连接管理器",
         "topthink/think-orm": "ThinkPHP ORM（thinkphp/framework），driver=thinkphp 时使用其连接管理器",
         "doctrine/dbal": "Symfony 体系底层数据库抽象层（doctrine/dbal），driver=symfony 时使用",
