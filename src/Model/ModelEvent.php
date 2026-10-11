@@ -97,7 +97,7 @@ trait ModelEvent
         if ($callback instanceof \Closure) {
             return $callback($this, $event);
         }
-        return call_user_func($callback, $this, $event);
+        return $callback($this, $event);
     }
 
     /**
