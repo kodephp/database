@@ -96,13 +96,7 @@ class EventManager
      */
     public function hasAny(): bool
     {
-        foreach ($this->listeners as $group) {
-            if ($group !== []) {
-                return true;
-            }
-        }
-
-        return false;
+        return array_any($this->listeners, fn($group) => $group !== []);
     }
 
     /**

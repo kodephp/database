@@ -2121,13 +2121,7 @@ class QueryBuilder
         $sql = $this->buildSelect();
 
         $dangerous = ['DROP ', 'DELETE ', 'TRUNCATE ', 'ALTER ', 'CREATE ', 'INSERT ', 'UPDATE ', 'REPLACE '];
-        foreach ($dangerous as $keyword) {
-            if (stripos($sql, $keyword) !== false) {
-                return false;
-            }
-        }
-
-        return true;
+        return array_all($dangerous, fn($keyword) => !(stripos($sql, $keyword) !== false));
     }
 
     /**

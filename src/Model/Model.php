@@ -1944,12 +1944,7 @@ abstract class Model implements ArrayAccess, JsonSerializable
      */
     public function hasAttributes(array $keys): bool
     {
-        foreach ($keys as $key) {
-            if (!array_key_exists($key, $this->attributes)) {
-                return false;
-            }
-        }
-        return true;
+        return array_all($keys, fn($key) => array_key_exists($key, $this->attributes));
     }
 
     /**

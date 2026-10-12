@@ -402,11 +402,6 @@ class Migrator
 
     protected function findFileByName(string $name): ?string
     {
-        foreach ($this->getMigrationFiles() as $file) {
-            if ($this->fileToName($file) === $name) {
-                return $file;
-            }
-        }
-        return null;
+        return array_find($this->getMigrationFiles(), fn($file) => $this->fileToName($file) === $name);
     }
 }

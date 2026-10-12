@@ -1061,12 +1061,7 @@ class Schema
      */
     public function columnExists(string $columnName): bool
     {
-        foreach ($this->columns as $column) {
-            if ($column->getName() === $columnName) {
-                return true;
-            }
-        }
-        return false;
+        return array_any($this->columns, fn($column) => $column->getName() === $columnName);
     }
 
     /**
