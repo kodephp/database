@@ -1844,7 +1844,11 @@ $hasAttrs = $user->hasAttributes(['id', 'name']); // 检查多个属性
 $first = $user->firstAttribute();    // 获取第一个属性
 $last = $user->lastAttribute();       // 获取最后一个属性
 $serialized = $user->serialize();     // 序列化模型
-$user2 = User::unserialize($serialized); // 反序列化模型
+$user2 = User::unserialize($serialized); // 反序列化模型（默认 allowed_classes=true，保关联对象）
+// 对象注入防线：数据若来自缓存/队列/会话等外部存储，收紧类白名单——
+// 白名单至少要包含模型类本身（载荷主体即模型；false 会让模型变成 Incomplete 必然失败）：
+$safe = User::unserialize($serialized, [User::class]);   // 白名单外的对象降级为 __PHP_Incomplete_Class（析构器/wakeup 不执行）
+// 载荷损坏或目标类不匹配 → InvalidArgumentException（而非 TypeError）
 ```
 
 ---

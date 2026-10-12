@@ -1980,11 +1980,31 @@ abstract class Model implements ArrayAccess, JsonSerializable
     /**
      * 反序列化模型
      *
+     * 防对象注入：数据可能来自缓存/队列/会话等外部存储，unserialize 默认
+     * 会实例化载荷中的任意类（析构器/wakeup 即执行）。$allowedClasses 与
+     * cache 包同一口径——默认 true 保持既有数据（含关联对象）可解，按需
+     * 收紧为类名白名单。
+     *
+     * 注意：载荷主体即模型对象自身，传 false（禁止一切类）会让模型本身
+     * 变成 __PHP_Incomplete_Class 而必然解包失败；收紧时白名单至少要包含
+     * static::class（如 [static::class] 只允许本类、关联对象按需追加）。
+     *
      * @param string $data 序列化字符串
+     * @param bool|array $allowedClasses unserialize 的类白名单（见上；默认 true 保 BC）
      * @return static
+     * @throws \InvalidArgumentException 载荷损坏或反序列化结果不是本模型类
      */
-    public static function unserialize(string $data): static
+    public static function unserialize(#[\SensitiveParameter] string $data, bool|array $allowedClasses = true): static
     {
-        return unserialize($data);
+        $model = @unserialize($data, ['allowed_classes' => $allowedClasses]);
+
+        if (! $model instanceof static) {
+            throw new \InvalidArgumentException(
+                '模型反序列化失败：载荷损坏、目标类不匹配或未在 allowed_classes 白名单内'
+                . '（期望 ' . static::class . '；白名单至少需包含它）',
+            );
+        }
+
+        return $model;
     }
 }
