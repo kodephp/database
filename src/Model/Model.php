@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Kode\Database\Model;
 
+use Kode\Database\Db\Db;
 use Kode\Database\Model\Concerns\HasAttributes;
 use Kode\Database\Model\Concerns\SoftDeletes;
 use Kode\Database\Model\Concerns\Timestamps;
@@ -15,6 +16,15 @@ use JsonSerializable;
 /**
  * 模型基类
  * 兼容 Hyperf、ThinkPHP、Laravel ORM 使用方式
+ *
+ * @implements ArrayAccess<string, mixed>
+ * @method static static with(string|array $relations) 预加载（User::with('posts')->get()）
+ * @method static static withCount(string|array $relations, ?\Closure $callback = null) 关联计数
+ * @method static static|bool has(array|string $conditions, string $operator = '>=', int $count = 1) 数组=记录存在性(bool)；字符串=关联筛选(查询态)
+ * @method static static whereHas(string $relation, ?\Closure $callback = null) 关联条件筛选
+ * @method static static orWhereHas(string $relation, ?\Closure $callback = null) 关联条件筛选（OR）
+ * @method static static doesNotHave(string $relation) 关联不存在筛选
+ * @method static static withWhereHas(string|array $relations, ?\Closure $callback = null) 预加载 + 关联条件
  */
 abstract class Model implements ArrayAccess, JsonSerializable
 {
@@ -30,8 +40,9 @@ abstract class Model implements ArrayAccess, JsonSerializable
     protected array $guarded = [];
     protected bool $timestamps = true;
     protected string $dateFormat = 'Y-m-d H:i:s';
-    protected bool $exists = false;
+    public bool $exists = false;
     protected array $original = [];
+    protected array $defaults = [];
 
     protected string $connection = 'default';
     protected string $database = '';
@@ -43,6 +54,32 @@ abstract class Model implements ArrayAccess, JsonSerializable
     public function __construct(array $attributes = [])
     {
         $this->fill($attributes);
+    }
+
+    /**
+     * 属性读取（$model->name）委托 getAttribute，走获取器/类型转换口径
+     */
+    public function __get(string $key): mixed
+    {
+        return $this->getAttribute($key);
+    }
+
+    /**
+     * 属性写入（$model->name = x）委托 setAttribute，纳入 attributes 与脏检查口径
+     */
+    public function __set(string $key, mixed $value): void
+    {
+        $this->setAttribute($key, $value);
+    }
+
+    public function __isset(string $key): bool
+    {
+        return $this->offsetExists($key);
+    }
+
+    public function __unset(string $key): void
+    {
+        unset($this->attributes[$key]);
     }
 
     /**
@@ -295,6 +332,65 @@ abstract class Model implements ArrayAccess, JsonSerializable
     }
 
     /**
+     * 执行查询（配合 with()/withCount()/has()/whereHas() 等实例态 DSL）
+     *
+     * 静态入口见 __callStatic：User::with('posts')->get()。
+     *
+     * @return static[]
+     */
+    public function get(): array
+    {
+        $rows = Db::table($this->table)->get();
+
+        $models = [];
+        foreach ($rows as $row) {
+            $models[] = $this->newFromBuilder($row);
+        }
+
+        return array_values($this->eagerLoadRelations($models));
+    }
+
+    /**
+     * 静态 DSL 入口：User::with(...)/withCount(...)/has(...) 等。
+     *
+     * 未定义的静态调用一律落到原型实例；DSL 名单内再走 __call 的 applyEagerDsl，
+     * 其余真实实例方法（load/get/summary...）由此获得静态可达性，未知名字由 __call 收口报错。
+     *
+     * @return mixed
+     */
+    public static function __callStatic(string $method, array $arguments): mixed
+    {
+        return (new static())->$method(...$arguments);
+    }
+
+    /**
+     * 实例侧 magic：承接原型续链（->withCount(...)/->orWhereHas(...)）与静态转发，
+     * 六个实例态 DSL 之外的方法一律报未定义。
+     *
+     * @return mixed
+     */
+    public function __call(string $method, array $arguments): mixed
+    {
+        if (in_array($method, [
+            'with',
+            'withCount',
+            'has',
+            'whereHas',
+            'orWhereHas',
+            'doesNotHave',
+            'withWhereHas',
+        ], true)) {
+            return $this->applyEagerDsl($method, $arguments);
+        }
+
+        throw new \BadMethodCallException(sprintf(
+            'Call to undefined method %s::%s()',
+            static::class,
+            $method,
+        ));
+    }
+
+    /**
      * 创建
      */
     public static function create(array $attributes = []): static
@@ -310,18 +406,19 @@ abstract class Model implements ArrayAccess, JsonSerializable
      */
     public static function updateOrCreate(array $search, array $values = []): static
     {
-        $instance = static::where($search)->first();
+        $row = static::where($search)->first();
 
-        if ($instance) {
+        if ($row !== null) {
+            $instance = (new static())->newFromBuilder($row);
             foreach ($values as $key => $value) {
-                $instance->$key = $value;
+                $instance->setAttribute($key, $value);
             }
             $instance->save();
-        } else {
-            $instance = static::create(array_merge($search, $values));
+
+            return $instance;
         }
 
-        return $instance;
+        return static::create(array_merge($search, $values));
     }
 
     /**
@@ -329,10 +426,10 @@ abstract class Model implements ArrayAccess, JsonSerializable
      */
     public static function firstOrCreate(array $search, array $values = []): static
     {
-        $instance = static::where($search)->first();
+        $row = static::where($search)->first();
 
-        if ($instance) {
-            return $instance;
+        if ($row !== null) {
+            return (new static())->newFromBuilder($row);
         }
 
         return static::create(array_merge($search, $values));
@@ -573,6 +670,14 @@ abstract class Model implements ArrayAccess, JsonSerializable
     {
         $className = basename(str_replace('\\', '/', static::class));
         return \strtolower(\lcfirst($className)) . '_id';
+    }
+
+    /**
+     * 主键名
+     */
+    public function getPrimaryKey(): string
+    {
+        return $this->primaryKey;
     }
 
     /**
@@ -1271,7 +1376,9 @@ abstract class Model implements ArrayAccess, JsonSerializable
      */
     public static function one(array $conditions): ?static
     {
-        return static::where($conditions)->first();
+        $row = static::where($conditions)->first();
+
+        return $row !== null ? (new static())->newFromBuilder($row) : null;
     }
 
     /**
@@ -1338,10 +1445,10 @@ abstract class Model implements ArrayAccess, JsonSerializable
      */
     public static function findOrCreate(array $attributes, array $values = []): static
     {
-        $instance = static::where($attributes)->first();
+        $row = static::where($attributes)->first();
 
-        if ($instance) {
-            return $instance;
+        if ($row !== null) {
+            return (new static())->newFromBuilder($row);
         }
 
         return static::create(array_merge($attributes, $values));
@@ -1375,17 +1482,6 @@ abstract class Model implements ArrayAccess, JsonSerializable
     public static function countBy(array $conditions): int
     {
         return static::where($conditions)->count();
-    }
-
-    /**
-     * 判断是否存在（静态方法）
-     *
-     * @param array $conditions 条件
-     * @return bool
-     */
-    public static function has(array $conditions): bool
-    {
-        return static::checkExists($conditions);
     }
 
     /**
@@ -1576,7 +1672,7 @@ abstract class Model implements ArrayAccess, JsonSerializable
      */
     public function isClean(): bool
     {
-        return empty($this->changes);
+        return $this->original === $this->attributes;
     }
 
     /**
@@ -1756,7 +1852,14 @@ abstract class Model implements ArrayAccess, JsonSerializable
      */
     public function getChanges(): array
     {
-        return $this->changes;
+        $changes = [];
+        foreach ($this->attributes as $key => $value) {
+            if (($this->original[$key] ?? null) !== $value) {
+                $changes[$key] = $value;
+            }
+        }
+
+        return $changes;
     }
 
     /**
@@ -1801,7 +1904,7 @@ abstract class Model implements ArrayAccess, JsonSerializable
      */
     public function isDeleted(): bool
     {
-        return $this->softDelete && isset($this->attributes['deleted_at']);
+        return $this->usesSoftDeletes() && isset($this->attributes[$this->softDeleteField]);
     }
 
     /**
@@ -1827,7 +1930,7 @@ abstract class Model implements ArrayAccess, JsonSerializable
             'key' => $this->getKey(),
             'exists' => $this->exists,
             'attributes' => count($this->attributes),
-            'changes' => count($this->changes),
+            'changes' => count($this->getChanges()),
             'relations' => count($this->relations),
         ];
     }

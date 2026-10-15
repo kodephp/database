@@ -27,7 +27,8 @@ class MorphToMany extends BelongsToMany
 
     public function getResults(): array
     {
-        $sql = "SELECT r.* FROM {$this->related->table} r
+        $relatedTable = $this->related->getTable();
+        $sql = "SELECT r.* FROM {$relatedTable} r
                 INNER JOIN {$this->table} t ON r.{$this->relatedKey} = t.{$this->relatedPivotKey}
                 WHERE t.{$this->foreignPivotKey} = ? AND t.{$this->relatedPivotKey} LIKE ?";
 
@@ -36,10 +37,7 @@ class MorphToMany extends BelongsToMany
 
         $instances = [];
         foreach ($results as $result) {
-            $instance = new $this->related();
-            $instance->setAttributes($result);
-            $instance->exists = true;
-            $instances[] = $instance;
+            $instances[] = $this->hydrate($result);
         }
 
         return $instances;

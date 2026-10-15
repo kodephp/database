@@ -19,10 +19,7 @@ class HasMany extends Relation
 
         $instances = [];
         foreach ($results as $result) {
-            $instance = new $this->related();
-            $instance->setAttributes($result);
-            $instance->exists = true;
-            $instances[] = $instance;
+            $instances[] = $this->hydrate($result);
         }
 
         return $instances;
@@ -48,10 +45,7 @@ class HasMany extends Relation
 
         $instances = [];
         foreach ($results as $result) {
-            $instance = new $this->related();
-            $instance->setAttributes($result);
-            $instance->exists = true;
-            $instances[] = $instance;
+            $instances[] = $this->hydrate($result);
         }
 
         return $instances;

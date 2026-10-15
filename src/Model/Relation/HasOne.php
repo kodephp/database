@@ -18,10 +18,7 @@ class HasOne extends Relation
         $result = $query->first();
 
         if ($result) {
-            $instance = new $this->related();
-            $instance->setAttributes($result);
-            $instance->exists = true;
-            return $instance;
+            return $this->hydrate($result);
         }
 
         return null;
@@ -34,10 +31,7 @@ class HasOne extends Relation
         $result = $query->first();
 
         if ($result) {
-            $instance = new $this->related();
-            $instance->setAttributes($result);
-            $instance->exists = true;
-            return $instance;
+            return $this->hydrate($result);
         }
 
         return null;

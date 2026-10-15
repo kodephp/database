@@ -14,7 +14,6 @@ class MorphMany extends Relation
     protected string $name;
     protected string $type;
     protected string $id;
-    protected ?string $localKey;
 
     public function __construct(
         Model $parent,
@@ -31,6 +30,16 @@ class MorphMany extends Relation
         $this->localKey = $localKey ?? $parent->getKeyName();
     }
 
+    public function getMorphType(): string
+    {
+        return $this->type;
+    }
+
+    public function getMorphValue(): string
+    {
+        return get_class($this->parent);
+    }
+
     public function getResults(): array
     {
         $query = $this->query();
@@ -40,10 +49,7 @@ class MorphMany extends Relation
 
         $instances = [];
         foreach ($results as $result) {
-            $instance = new $this->related();
-            $instance->setAttributes($result);
-            $instance->exists = true;
-            $instances[] = $instance;
+            $instances[] = $this->hydrate($result);
         }
 
         return $instances;

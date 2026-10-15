@@ -1,0 +1,16 @@
+parameters:
+    level: 6
+    paths:
+        - src
+    excludePaths:
+        # 可选集成桥接（Laravel/Hyperf/ThinkPHP/Symfony 容器类不随本包安装，无法解析）
+        - src/Connection/Bridge/*
+    ignoreErrors:
+        # 数组值类型是深层内部细节，公共 API 面已由参数/返回类型钉住
+        -
+            message: '#no value type specified in iterable type#'
+            identifier: missingType.iterableValue
+        # 不可变派生工厂模式（Exception::xxx() 等），类树内构造签名受控
+        -
+            message: '#Unsafe usage of new static\(\)#'
+            identifier: new.static

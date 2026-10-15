@@ -78,7 +78,7 @@ class Column
             $sql .= ' PRIMARY KEY';
         }
 
-        if (isset($this->options['default'])) {
+        if (array_key_exists('default', $this->options)) {
             $default = $this->options['default'];
             if ($default === null) {
                 $sql .= ' DEFAULT NULL';

@@ -305,8 +305,8 @@ class PdoConnection implements ExecutorInterface
     #[\Override]
     public function insert(string $sql, array $bindings = []): int|string
     {
-        return $this->observe($sql, $bindings, function (string $sql, array $bindings): int|string {
-            return $this->retryOnce(function () use ($sql, $bindings): int|string {
+        return $this->observe($sql, $bindings, function (string $sql, array $bindings): string {
+            return $this->retryOnce(function () use ($sql, $bindings): string {
                 $stmt = $this->prepareStatement($sql);
                 self::bindAll($stmt, $bindings);
                 $stmt->execute();

@@ -38,6 +38,6 @@ class MorphTo extends Relation
         $instance = new $type();
         $result = $instance->query()->find($id);
 
-        return $result;
+        return $result !== null ? $instance->newFromBuilder($result) : null;
     }
 }

@@ -387,9 +387,6 @@ class Migrator
         $all = [];
         while ($batch = $this->rollback(1)) {
             $all = array_merge($all, $batch);
-            if (empty($batch)) {
-                break;
-            }
         }
         return $all;
     }

@@ -18,10 +18,7 @@ class BelongsTo extends Relation
         $result = $query->first();
 
         if ($result) {
-            $instance = new $this->related();
-            $instance->setAttributes($result);
-            $instance->exists = true;
-            return $instance;
+            return $this->hydrate($result);
         }
 
         return null;
@@ -30,5 +27,10 @@ class BelongsTo extends Relation
     public function get(): ?Model
     {
         return $this->getResults();
+    }
+
+    public function getOwnerKey(): ?string
+    {
+        return $this->localKey;
     }
 }

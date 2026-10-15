@@ -17,7 +17,7 @@ use Kode\Database\Db\Connection;
 class Db
 {
     /** @var string 版本号（与 composer.json 的 version 保持同步，漏改由 VersionGuardTest 拦下） */
-    public const string VERSION = '2.1.0';
+    public const string VERSION = '2.2.0';
 
     /**
      * 获取本包版本号
@@ -882,7 +882,9 @@ class Db
             return false;
         }
 
-        return self::tableWrite($table)->insert($data);
+        self::tableWrite($table)->insert($data);
+
+        return true;
     }
 
     /**
@@ -1143,9 +1145,6 @@ class Db
 
         $results = [];
         foreach ($statements as $statement) {
-            if (empty($statement)) {
-                continue;
-            }
             try {
                 self::statement($statement);
                 $results[] = ['sql' => substr($statement, 0, 50) . '...', 'success' => true];

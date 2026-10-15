@@ -35,7 +35,8 @@ class BelongsToMany extends Relation
 
     public function getResults(): array
     {
-        $sql = "SELECT r.* FROM {$this->related->table} r
+        $relatedTable = $this->related->getTable();
+        $sql = "SELECT r.* FROM {$relatedTable} r
                 INNER JOIN {$this->table} t ON r.{$this->relatedKey} = t.{$this->relatedPivotKey}
                 WHERE t.{$this->foreignPivotKey} = ?";
 
@@ -43,13 +44,25 @@ class BelongsToMany extends Relation
 
         $instances = [];
         foreach ($results as $result) {
-            $instance = new $this->related();
-            $instance->setAttributes($result);
-            $instance->exists = true;
-            $instances[] = $instance;
+            $instances[] = $this->hydrate($result);
         }
 
         return $instances;
+    }
+
+    public function getTable(): string
+    {
+        return $this->table;
+    }
+
+    public function getForeignPivotKey(): ?string
+    {
+        return $this->foreignPivotKey;
+    }
+
+    public function getRelatedPivotKey(): ?string
+    {
+        return $this->relatedPivotKey;
     }
 
     public function get(): array

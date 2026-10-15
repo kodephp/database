@@ -41,13 +41,10 @@ class PoolManager
 
         // 若配置未启用池化（pool 为空 / false / enabled=false），自动退化为单连接池
         if (!self::isPoolEnabled($config) && $poolType === 'connection') {
-            $explicitType = $config['pool']['type'] ?? null;
-            if ($explicitType === 'single' || !self::isPoolEnabled($config)) {
-                self::$poolType = 'single';
-                self::$poolTypes[$driver] = 'single';
-                self::$pools[$driver] = new SingleConnectionPool($config, $driver);
-                return;
-            }
+            self::$poolType = 'single';
+            self::$poolTypes[$driver] = 'single';
+            self::$pools[$driver] = new SingleConnectionPool($config, $driver);
+            return;
         }
 
         // 允许通过 pool.type 显式指定池类型
@@ -235,7 +232,7 @@ class PoolManager
             $fiber = @\Fiber::getCurrent();
             if ($fiber !== null) {
                 try {
-                    $fiberId = $fiber->getId();
+                    $fiberId = spl_object_id($fiber);
                     $key = "fiber_{$fiberId}";
 
                     if (!isset(self::$contextPools[$key])) {
@@ -300,7 +297,7 @@ class PoolManager
             $fiber = @\Fiber::getCurrent();
             if ($fiber !== null) {
                 try {
-                    $fiberId = $fiber->getId();
+                    $fiberId = spl_object_id($fiber);
                     $key = "fiber_{$fiberId}";
                     unset(self::$contextPools[$key]);
                 } catch (\Throwable) {

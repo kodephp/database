@@ -67,10 +67,22 @@ class QueryBuilder
      */
     public function select(array|string ...$columns): static
     {
-        if (count($columns) === 1 && is_string($columns[0]) && strpos($columns[0], ',') !== false) {
-            $columns = array_map('trim', explode(',', $columns[0]));
+        $flat = [];
+        foreach ($columns as $column) {
+            if (is_array($column)) {
+                foreach ($column as $inner) {
+                    $flat[] = $inner;
+                }
+            } else {
+                $flat[] = $column;
+            }
         }
-        $this->columns = $columns;
+
+        if (count($flat) === 1 && is_string($flat[0]) && str_contains($flat[0], ',')) {
+            $flat = array_map('trim', explode(',', $flat[0]));
+        }
+
+        $this->columns = $flat;
         return $this;
     }
 
@@ -833,6 +845,25 @@ class QueryBuilder
     }
 
     /**
+     * 简单分页（不做 COUNT，深分页/大表少一次全表聚合）
+     *
+     * @return array{per_page:int,current_page:int,has_more:bool,items:array}
+     */
+    public function simplePaginate(int $page = 1, int $perPage = 15): array
+    {
+        $offset = ($page - 1) * $perPage;
+
+        $items = $this->limit($perPage)->offset($offset)->get();
+
+        return [
+            'per_page' => $perPage,
+            'current_page' => $page,
+            'has_more' => count($items) === $perPage,
+            'items' => $items,
+        ];
+    }
+
+    /**
      * 设置主键名
      */
     public function setPrimaryKey(string $key): static
@@ -1171,7 +1202,14 @@ class QueryBuilder
             }
         }
 
-        $exists = (bool) $this->where($where)->exists();
+        // 唯一键在数据里不全时无法定位目标行：保守放弃，避免 where([]) 命中任意行后误更新
+        if (count($where) !== count($uniqueKeys)) {
+            return false;
+        }
+
+        // exists/update 各用独立副本：直接链在同一实例上会把 exists 的 where/limit/bindings
+        // 带进后续 UPDATE，绑定与占位符错位
+        $exists = $this->copy()->where($where)->exists();
 
         if ($exists) {
             $updateData = [];
@@ -1190,12 +1228,14 @@ class QueryBuilder
             }
 
             if (!empty($updateData)) {
-                return $this->where($where)->update($updateData) > 0;
+                return $this->copy()->where($where)->update($updateData) > 0;
             }
             return false;
         }
 
-        return $this->insert($data);
+        $this->insert($data);
+
+        return true;
     }
 
     /**
@@ -1348,11 +1388,9 @@ class QueryBuilder
         }
 
         $data = array_merge($attributes, $values);
-        if ($this->insert($data)) {
-            return $this->where($attributes)->first();
-        }
+        $this->insert($data);
 
-        return null;
+        return $this->where($attributes)->first();
     }
 
     /**
@@ -1367,7 +1405,9 @@ class QueryBuilder
         }
 
         $data = array_merge($search, $values);
-        return $this->insert($data);
+        $this->insert($data);
+
+        return true;
     }
 
     /**
@@ -1502,8 +1542,7 @@ class QueryBuilder
      */
     public function newQuery(): static
     {
-        $newBuilder = new self($this->connection);
-        return $newBuilder;
+        return new static($this->connection);
     }
 
     /**
@@ -1513,24 +1552,7 @@ class QueryBuilder
      */
     public function copy(): static
     {
-        $copied = new self($this->connection);
-        $copied->table = $this->table;
-        $copied->columns = $this->columns;
-        $copied->wheres = $this->wheres;
-        $copied->bindings = $this->bindings;
-        $copied->limit = $this->limit;
-        $copied->offset = $this->offset;
-        $copied->orderBy = $this->orderBy;
-        $copied->orderDirection = $this->orderDirection;
-        $copied->orderIsRaw = $this->orderIsRaw;
-        $copied->groupBy = $this->groupBy;
-        $copied->having = $this->having;
-        $copied->joins = $this->joins;
-        $copied->unionQueries = $this->unionQueries;
-        $copied->lockFor = $this->lockFor;
-        $copied->tableAlias = $this->tableAlias;
-        $copied->isDistinct = $this->isDistinct;
-        return $copied;
+        return clone $this;
     }
 
     /**
@@ -1737,11 +1759,9 @@ class QueryBuilder
         }
 
         $data = array_merge($attributes, $values);
-        if ($this->insert($data)) {
-            return $this->where($attributes)->first();
-        }
+        $this->insert($data);
 
-        return null;
+        return $this->where($attributes)->first();
     }
 
     /**

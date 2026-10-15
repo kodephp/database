@@ -655,17 +655,19 @@ class Connection
     /**
      * 注册查询钩子（一次登记前后两个）
      *
-     * @param array{before?:callable,after?:callable} $hooks
+     * @param array{before?:mixed,after?:mixed} $hooks 非 callable 的条目会被忽略
      * @param string|null $connectionName 连接名
      */
     public static function registerQueryHook(array $hooks, ?string $connectionName = null): void
     {
-        if (isset($hooks['before']) && is_callable($hooks['before'])) {
-            self::beforeQuery($hooks['before'], $connectionName);
+        $before = $hooks['before'] ?? null;
+        if (is_callable($before)) {
+            self::beforeQuery($before, $connectionName);
         }
 
-        if (isset($hooks['after']) && is_callable($hooks['after'])) {
-            self::afterQuery($hooks['after'], $connectionName);
+        $after = $hooks['after'] ?? null;
+        if (is_callable($after)) {
+            self::afterQuery($after, $connectionName);
         }
     }
 
