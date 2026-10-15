@@ -14,3 +14,6 @@ parameters:
         -
             message: '#Unsafe usage of new static\(\)#'
             identifier: new.static
+        # 可选能力探测（method_exists 在具体类展开后恒真，trait 独立复用需保留兜底）
+        -
+            identifier: function.alreadyNarrowedType

@@ -36,7 +36,7 @@ abstract class Migration
     protected ?string $connection = null;
 
     /** 迁移批次（由 Migrator 写入） */
-    public int $batch = 0;
+    public private(set) int $batch = 0;
 
     /**
      * 执行迁移（建表/改表）

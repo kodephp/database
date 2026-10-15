@@ -145,6 +145,7 @@ class ConnectionPool implements PoolInterface
         while ((hrtime(true) - $startTime) / 1e9 < $this->maxWaitTime) {
             if (!empty($this->connections)) {
                 $connection = array_pop($this->connections);
+                // @phpstan-ignore argument.type (!empty 守卫保证非空，array_pop 泛型返回类型静态不可缩窄)
                 $this->inUseConnections[spl_object_hash($connection)] = time();
                 return $connection;
             }

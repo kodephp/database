@@ -771,7 +771,7 @@ abstract class Model implements ArrayAccess, JsonSerializable
      */
     public function getSoftDeleteField(): string
     {
-        return $this->softDeleteField ?? 'deleted_at';
+        return $this->softDeleteField;
     }
 
     /**

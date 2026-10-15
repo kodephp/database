@@ -17,7 +17,7 @@ use Kode\Database\Db\Connection;
 class Db
 {
     /** @var string 版本号（与 composer.json 的 version 保持同步，漏改由 VersionGuardTest 拦下） */
-    public const string VERSION = '2.2.0';
+    public const string VERSION = '2.3.0';
 
     /**
      * 获取本包版本号
@@ -427,7 +427,7 @@ class Db
 
         if (self::$transactionDepth === 0 && !empty(self::$transactionConnections)) {
             $releaseKey = null;
-            if ($name !== null && PoolManager::hasPool($name)) {
+            if (PoolManager::hasPool($name)) {
                 $releaseKey = $name;
             } elseif ($driverKey !== null && PoolManager::hasPool($driverKey)) {
                 $releaseKey = $driverKey;
@@ -465,7 +465,7 @@ class Db
 
         if (self::$transactionDepth === 0 && !empty(self::$transactionConnections)) {
             $releaseKey = null;
-            if ($name !== null && PoolManager::hasPool($name)) {
+            if (PoolManager::hasPool($name)) {
                 $releaseKey = $name;
             } elseif ($driverKey !== null && PoolManager::hasPool($driverKey)) {
                 $releaseKey = $driverKey;
