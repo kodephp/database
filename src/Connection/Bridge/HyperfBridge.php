@@ -7,6 +7,7 @@ namespace Kode\Database\Connection\Bridge;
 use Hyperf\DbConnection\Db;
 use Kode\Database\Connection\ExecutorInterface;
 use Kode\Database\Connection\QueryObservation;
+use Kode\Database\Connection\TransactionObservation;
 
 /**
  * Hyperf ORM 桥接器
@@ -19,6 +20,7 @@ use Kode\Database\Connection\QueryObservation;
 class HyperfBridge implements ExecutorInterface
 {
     use QueryObservation;
+    use TransactionObservation;
 
     public function __construct(protected array $config = [])
     {
@@ -67,19 +69,19 @@ class HyperfBridge implements ExecutorInterface
     #[\Override]
     public function beginTransaction(): void
     {
-        $this->db()->beginTransaction();
+        $this->observeBegin(fn () => $this->db()->beginTransaction());
     }
 
     #[\Override]
     public function commit(): void
     {
-        $this->db()->commit();
+        $this->observeCommit(fn () => $this->db()->commit());
     }
 
     #[\Override]
     public function rollBack(): void
     {
-        $this->db()->rollBack();
+        $this->observeRollback(fn () => $this->db()->rollBack());
     }
 
     #[\Override]

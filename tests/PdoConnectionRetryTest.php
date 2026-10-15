@@ -329,17 +329,23 @@ final class PdoConnectionRetryTest extends TestCase
         $fresh->rollBack();
     }
 
-    /** 嵌套事务（level 已 >0）不重复 BEGIN，也不触发重连 */
-    public function testNestedBeginDoesNotTouchPdo(): void
+    /** 嵌套事务（level 已 >0）建 savepoint，不重复发真实 BEGIN，层级照常递增 */
+    public function testNestedBeginCreatesSavepointInsteadOfRealBegin(): void
     {
         $probe = self::probe(['driver' => 'pgsql']);
-        $dead = new DeadHandlePdo();
-        $probe->inject($dead);
-        $probe->forceLevel(2);
+        // 注入活句柄并预开事务：嵌套路径必须走 SAVEPOINT sp_2，
+        // 若误发第二个 BEGIN，PDO 会因「已有活动事务」直接抛错
+        $live = new \PDO('sqlite::memory:');
+        $live->beginTransaction();
+        $probe->inject($live);
+        $probe->forceLevel(1);
 
         $probe->beginTransaction();
 
-        self::assertSame(0, $dead->beginCalls, '嵌套事务不得再发 BEGIN');
-        self::assertSame(3, $probe->level(), '只递增层级');
+        self::assertSame(2, $probe->level(), '嵌套层级照常递增');
+        self::assertTrue($live->inTransaction(), '外层事务仍然存活');
+        // 能回到 sp_2 即证明 savepoint 真的建出来了（旧实现只动计数器，这里会报 savepoint 不存在）
+        $live->exec('ROLLBACK TO SAVEPOINT sp_2');
+        $live->rollBack();
     }
 }

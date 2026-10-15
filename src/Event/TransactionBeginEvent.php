@@ -7,8 +7,10 @@ namespace Kode\Database\Event;
 /**
  * 事务开始事件
  *
- * 注意：目前包内没有任何派发点（事务由各执行器/ORM 自己管理，嵌套层级口径还没统一），
- * 注册监听不会收到回调。需要事务观测请先用已接线的 SqlEvent，或见 README「事件监听」。
+ * 由 {@see \Kode\Database\Connection\TransactionObservation} 在执行器事务边界派发：
+ * level 为完成后的新嵌套层级（1 为最外层），与同层级的 TransactionCommitEvent /
+ * TransactionRollbackEvent 一一配对；连接名与 SqlEvent 同口径。只在底层 BEGIN /
+ * SAVEPOINT 成功后派发，无人监听时不构造事件对象。
  */
 class TransactionBeginEvent
 {

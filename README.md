@@ -19,7 +19,7 @@
 - **连接池管理**：协程上下文隔离，支持 Fiber；无池时自动退化为单连接（`single`），零配置也能保证事务原子性
 - **常驻内存优化**：内置 PDO 执行器支持预编译语句缓存（上限 256，按 SQL 文本复用 PDOStatement）、惰性断连重试（失效由 PDOException 暴露、捕获后重连重试一次，含 pgsql 的 `HY000` 断链识别；事务中途断链不重放，口径见「断链识别与自动重连」）、免去每查一次 SELECT 1 探活，显著降低常驻内存场景下的 DB 往返
 - **查询观测**：查询日志、前后查询钩子、`SqlEvent` 三条 API 统一挂在执行器切面上（含真实耗时、连接名与失败异常），内置 PDO 执行器和四个 ORM 桥接器同一口径
-- **事件监听**：SQL 事件已接线，模型事件另有钩子体系；事务事件类尚无派发点（见「事件监听」一节）
+- **事件监听**：SQL 事件与事务事件（`TransactionBeginEvent` / `TransactionCommitEvent` / `TransactionRollbackEvent`，含嵌套层级配对）均已接线，模型事件另有钩子体系（见「事件监听」一节）
 - **Schema 定义**：表结构构建器
 - **迁移（Migrations）**：基于 Schema 的迁移基类与运行器，自动记录迁移历史
 - **获取器/修改器**：类型转换、属性访问（PHP 8.3 `json_validate` 安全校验）
@@ -2172,9 +2172,45 @@ EventManager::getInstance()->listen(null, MySqlListener::class); // 类不存在
 
 ### 事务事件
 
-`TransactionBeginEvent` / `TransactionCommitEvent` / `TransactionRollbackEvent` 三个类**目前没有包内派发点**：
-注册监听不会收到回调。事务由各执行器与底层 ORM 自行管理（Laravel / Hyperf 各自维护嵌套层级），
-层级口径还没统一，所以先不硬派。要观测事务，暂用 `SqlEvent` 之外自行埋点，或等后续版本接线。
+`TransactionBeginEvent` / `TransactionCommitEvent` / `TransactionRollbackEvent` 与查询观测同一执行器切面
+（`Connection\TransactionObservation`）：**内置 PDO 执行器与四个 ORM 桥接器的事务入口都会派发**，
+经 `Db::beginTransaction()` / `Db\Connection::transaction()` / 迁移器走的调用同样覆盖。
+
+```php
+use Kode\Database\Event\EventManager;
+use Kode\Database\Event\TransactionBeginEvent;
+use Kode\Database\Event\TransactionCommitEvent;
+use Kode\Database\Event\TransactionRollbackEvent;
+
+EventManager::getInstance()->listen(TransactionCommitEvent::class, function (TransactionCommitEvent $event) {
+    $event->getLevel();       // 正在关闭的嵌套层级（1 为最外层）
+    $event->getConnection();  // 连接名，与 SqlEvent 同口径
+    $event->getTime();        // 提交完成时刻（unix 秒）
+});
+```
+
+统一口径：
+
+- **配对**：`begin(L)` 与同层级的 `commit(L)` / `rollback(L)` 一一配对。Begin 派发「完成后」的新层级，
+  Commit / Rollback 派发「正在关闭」的层级；未跟踪的关闭调用（level 0）不派发。
+- **成功边界**：只在底层操作成功后派发（提交失败不派发 commit 事件；回滚在断链消亡时视为事实回滚，照常派发）。
+- **零成本**：无人监听时不构造事件对象，与 `SqlEvent` 同一守卫。
+- **故障隔离**：监听器抛异常只落 error_log，绝不外溢到事务本身。
+- **覆盖边界**：观测的是经执行器的事务入口；应用直接调用底层 ORM 自己的事务 API（如 Laravel `DB::transaction()`）
+  不经过桥接器，不在此口径内。
+
+### 嵌套事务的 savepoint 语义（内置 PDO 执行器）
+
+嵌套 `beginTransaction()` 从第二层起建立 `SAVEPOINT sp_N`：
+
+- 内层 `commit()` = `RELEASE SAVEPOINT sp_N`：本层不可再独立回滚，但外层回滚仍会整体撤销本层改动；
+- 内层 `rollBack()` = `ROLLBACK TO SAVEPOINT sp_N`：只撤销本层开始之后的改动，外层事务继续；
+- 最外层 `commit()` / `rollBack()` 才作用于真实事务。
+
+方言支持：mysql / pgsql / sqlite / oci 走标准 ANSI 语法（Oracle 回滚目标不带 `SAVEPOINT` 关键字）；
+sqlsrv 的内层提交退化为只动计数器（无通用 `RELEASE` 语法，savepoint 随最外层提交一并释放，结果语义不变），
+内层回滚使用 `ROLLBACK TRANSACTION sp_N`。断链后不重放 savepoint：父事务已随旧句柄消亡，
+重放等于向调用方谎报「外层数据还在」，直接断开并上抛。
 
 ---
 

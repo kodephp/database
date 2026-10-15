@@ -7,7 +7,9 @@ namespace Kode\Database\Event;
 /**
  * 事务提交事件
  *
- * 注意：目前没有包内派发点，见 {@see TransactionBeginEvent} 的说明。
+ * 由 {@see \Kode\Database\Connection\TransactionObservation} 派发，level 为正在关闭的
+ * 嵌套层级（与同层级 TransactionBeginEvent 配对）；time 为提交完成时刻。只在提交
+ * 成功后派发，提交失败（含断链）不派发。语义详见 {@see TransactionBeginEvent}。
  */
 class TransactionCommitEvent
 {

@@ -7,7 +7,9 @@ namespace Kode\Database\Event;
 /**
  * 事务回滚事件
  *
- * 注意：目前没有包内派发点，见 {@see TransactionBeginEvent} 的说明。
+ * 由 {@see \Kode\Database\Connection\TransactionObservation} 派发，level 为正在关闭的
+ * 嵌套层级（与同层级 TransactionBeginEvent 配对）；time 为回滚完成时刻。只在回滚
+ * 成功（或断链消亡即事实回滚）后派发。语义详见 {@see TransactionBeginEvent}。
  */
 class TransactionRollbackEvent
 {

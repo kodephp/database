@@ -8,6 +8,7 @@ use Doctrine\DBAL\Connection as DbalConnection;
 use Doctrine\DBAL\DriverManager;
 use Kode\Database\Connection\ExecutorInterface;
 use Kode\Database\Connection\QueryObservation;
+use Kode\Database\Connection\TransactionObservation;
 
 /**
  * Symfony 体系桥接器（基于 Doctrine DBAL）
@@ -21,6 +22,7 @@ use Kode\Database\Connection\QueryObservation;
 class SymfonyBridge implements ExecutorInterface
 {
     use QueryObservation;
+    use TransactionObservation;
 
     public function __construct(
         protected array $config = [],
@@ -110,19 +112,19 @@ class SymfonyBridge implements ExecutorInterface
     #[\Override]
     public function beginTransaction(): void
     {
-        $this->conn()->beginTransaction();
+        $this->observeBegin(fn () => $this->conn()->beginTransaction());
     }
 
     #[\Override]
     public function commit(): void
     {
-        $this->conn()->commit();
+        $this->observeCommit(fn () => $this->conn()->commit());
     }
 
     #[\Override]
     public function rollBack(): void
     {
-        $this->conn()->rollBack();
+        $this->observeRollback(fn () => $this->conn()->rollBack());
     }
 
     #[\Override]

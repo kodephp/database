@@ -6,6 +6,7 @@ namespace Kode\Database\Connection\Bridge;
 
 use Kode\Database\Connection\ExecutorInterface;
 use Kode\Database\Connection\QueryObservation;
+use Kode\Database\Connection\TransactionObservation;
 use think\facade\Db;
 
 /**
@@ -19,6 +20,7 @@ use think\facade\Db;
 class ThinkPHPBridge implements ExecutorInterface
 {
     use QueryObservation;
+    use TransactionObservation;
 
     public function __construct(protected array $config = [])
     {
@@ -71,19 +73,19 @@ class ThinkPHPBridge implements ExecutorInterface
     #[\Override]
     public function beginTransaction(): void
     {
-        $this->conn()->startTrans();
+        $this->observeBegin(fn () => $this->conn()->startTrans());
     }
 
     #[\Override]
     public function commit(): void
     {
-        $this->conn()->commit();
+        $this->observeCommit(fn () => $this->conn()->commit());
     }
 
     #[\Override]
     public function rollBack(): void
     {
-        $this->conn()->rollback();
+        $this->observeRollback(fn () => $this->conn()->rollback());
     }
 
     #[\Override]

@@ -22,6 +22,7 @@ use PDOStatement;
 class PdoConnection implements ExecutorInterface
 {
     use QueryObservation;
+    use TransactionObservation;
 
     /** 支持的数据库类型别名 -> PDO DSN 驱动名 */
     private const PDO_DRIVERS = [
@@ -383,19 +384,49 @@ class PdoConnection implements ExecutorInterface
                 $this->disconnect();
                 $this->ensureConnected()->beginTransaction();
             }
+            $this->transactionLevel++;
+            $this->dispatchTransactionBegin($this->transactionLevel);
+
+            return;
         }
-        $this->transactionLevel++;
+
+        // 嵌套层建 savepoint：内层 commit 释放本层标记、内层 rollBack 真正回到本层，
+        // 而不是只动计数器（旧实现内层回滚是空操作，外层提交会把「已回滚」的数据一起提交）。
+        // 断链后不重放 savepoint：父事务已随旧句柄消亡，重放等于向调用方谎报「外层数据还在」，
+        // 直接 disconnect + 上抛，让调用方知道这棵事务树已经没了。
+        $level = $this->transactionLevel + 1;
+        try {
+            $pdo->exec($this->savepointSql('begin', $level));
+        } catch (PDOException $e) {
+            if (!self::isConnectionFailure($e, $this->pdoDriver())) {
+                throw $e;
+            }
+            $this->disconnect();
+            throw $e;
+        }
+        $this->transactionLevel = $level;
+        $this->dispatchTransactionBegin($level);
     }
 
     #[\Override]
     public function commit(): void
     {
+        $closing = $this->transactionLevel;
         if ($this->transactionLevel > 0) {
             $this->transactionLevel--;
         }
         if ($this->transactionLevel === 0 && $this->pdo !== null && $this->pdo->inTransaction()) {
             $this->pdo->commit();
+        } elseif ($closing > 1 && $this->pdo !== null && $this->pdo->inTransaction()) {
+            // 内层提交 = 释放本层 savepoint：本层不可再独立回滚，但外层仍可整体回滚。
+            // 提交失败必须让调用方知道（与最外层 commit 同口径），异常直接上抛。
+            // sqlsrv 无通用 RELEASE 语法，savepointSql 返回空串表示「只动计数器」。
+            $sql = $this->savepointSql('commit', $closing);
+            if ($sql !== '') {
+                $this->pdo->exec($sql);
+            }
         }
+        $this->dispatchTransactionCommit($closing);
     }
 
     #[\Override]
@@ -403,6 +434,7 @@ class PdoConnection implements ExecutorInterface
     {
         // 与 commit 对称：以 PDO 实际状态为准，避免上层误以为事务开启但底层已中断
         // 时，直接 PDO::rollBack() 抛 "There is no active transaction"。
+        $closing = $this->transactionLevel;
         if ($this->transactionLevel > 0) {
             $this->transactionLevel--;
         }
@@ -421,7 +453,48 @@ class PdoConnection implements ExecutorInterface
                 // 只在真的丢弃句柄时清缓存：回滚成功是热路径，不能顺手把连接和语句缓存扔掉
                 $this->disconnect();
             }
+        } elseif ($closing > 1 && $this->pdo !== null && $this->pdo->inTransaction()) {
+            // 内层回滚 = 回到本层 savepoint：撤销本层开始之后的所有改动，外层事务继续。
+            // 断链口径与最外层回滚一致：事务已随连接消亡即事实回滚，吞掉连接级异常并丢弃死句柄。
+            try {
+                $this->pdo->exec($this->savepointSql('rollback', $closing));
+            } catch (PDOException $e) {
+                if (!self::isConnectionFailure($e, $this->pdoDriver())) {
+                    throw $e;
+                }
+                $this->disconnect();
+            }
         }
+        $this->dispatchTransactionRollback($closing);
+    }
+
+    /**
+     * 嵌套事务的 savepoint 控制语句（仅最外层之外的层级使用）。
+     *
+     * 方言差异：Oracle 的回滚目标不带 SAVEPOINT 关键字；SQL Server 的回滚目标写作
+     * ROLLBACK TRANSACTION，且 RELEASE SAVEPOINT 依赖 ANSI_RELEASE 会话选项 —— 其内层
+     * 提交退化为只动计数器（savepoint 会随最外层提交一并释放，结果语义仍然正确）。
+     * sqlsrv 之外的主流驱动（mysql / pgsql / sqlite / oci）走标准 ANSI 语法。
+     *
+     * @param 'begin'|'commit'|'rollback' $action
+     */
+    private function savepointSql(string $action, int $level): string
+    {
+        $name = 'sp_' . $level;
+        $driver = $this->pdoDriver();
+
+        return match ($action) {
+            'begin' => "SAVEPOINT {$name}",
+            'commit' => match ($driver) {
+                'sqlsrv' => '',
+                default => "RELEASE SAVEPOINT {$name}",
+            },
+            'rollback' => match ($driver) {
+                'oci' => "ROLLBACK TO {$name}",
+                'sqlsrv' => "ROLLBACK TRANSACTION {$name}",
+                default => "ROLLBACK TO SAVEPOINT {$name}",
+            },
+        };
     }
 
     #[\Override]
