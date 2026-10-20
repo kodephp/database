@@ -317,9 +317,46 @@ class PdoConnection implements ExecutorInterface
                 self::bindAll($stmt, $bindings);
                 $stmt->execute();
 
-                return $this->ensureConnected()->lastInsertId();
+                return $this->lastInsertIdSafe();
             });
         });
+    }
+
+    /**
+     * 取最后插入 id；pgsql 的「lastval 未定义」单独放行。
+     *
+     * pdo_pgsql 的 `PDO::lastInsertId()` = `SELECT lastval()`：INSERT 显式带主键、
+     * 本会话从未触发任何序列时抛 55000 —— 语句已执行成功，这不是「插入失败」，
+     * 只是没有自增 id 可回报，交回空串（显式主键的行本就该由调用方自持 id）。
+     * 其余异常照旧上抛：判据错放会把真故障吞成一个空 id。
+     */
+    protected function lastInsertIdSafe(): string
+    {
+        try {
+            return (string) $this->ensureConnected()->lastInsertId();
+        } catch (PDOException $e) {
+            if ($this->pdoDriver() === 'pgsql' && self::isLastValUndefined($e)) {
+                return '';
+            }
+
+            throw $e;
+        }
+    }
+
+    /**
+     * 「lastval 未定义」判据（纯函数，可离线断言）。
+     *
+     * 函数名 `lastval` 不随报错本地化翻译，SQLSTATE 恒 55000；两半都对上才认——
+     * 55000 还有别的语义（如权限类），只按 SQLSTATE 认会把真故障吞成空 id。
+     */
+    protected static function isLastValUndefined(PDOException $e): bool
+    {
+        if (!str_contains($e->getMessage(), 'lastval')) {
+            return false;
+        }
+
+        return ($e->errorInfo[0] ?? '') === '55000'
+            || str_contains($e->getMessage(), 'SQLSTATE[55000]');
     }
 
     #[\Override]

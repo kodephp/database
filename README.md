@@ -5,7 +5,7 @@
 
 ## 版本自述
 
-本包版本可由类常量核对：`Kode\Database\Db\Db::VERSION`，或调用 `Db::version()`（当前 `2.3.1`）。
+本包版本可由类常量核对：`Kode\Database\Db\Db::VERSION`，或调用 `Db::version()`（当前 `2.3.2`）。
 
 `composer.json` 的 `version` 字段是 composer 侧的权威值，类常量是它的交叉核对副本——`tests/VersionGuardTest.php` 在两者不一致时直接失败，杜绝「tag 打了、常量忘改」的漂移。
 
@@ -967,6 +967,12 @@ Db::table('users')->insertAll([
     ['name' => 'b', 'email' => 'b@example.com'],
     ['name' => 'c', 'email' => 'c@example.com'],
 ]); // 批量插入
+
+> **`insert()` 的返回值（内置 PDO 执行器）**：pgsql 下取自 `PDO::lastInsertId()`
+>（= `SELECT lastval()`）。INSERT **显式带主键**、本会话从未触发任何序列时 `lastval`
+> 未定义会抛 55000 —— 语句已执行成功，这不是插入失败。自 v2.3.2 起该情形交回**空串**，
+> 不再包装成 `插入失败: …lastval…`；显式主键的行本就该由调用方自持 id（若会话此前跑过
+> 别的序列，返回值可能是那个序列的值，同样不可当自增回执用）。
 
 // 更新
 Db::table('users')->where('id', '=', 1)->update(['name' => 'newname']);
