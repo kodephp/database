@@ -209,6 +209,9 @@ class PdoConnection implements ExecutorInterface
      *
      * 只有 bool 与 null 需要声明：其余类型走 `PARAM_STR`，与旧行为逐字节相同
      * （包括整数、浮点、以及对象按 `__toString` 转换的那一类）。
+     * `DateTimeInterface` 是唯一的例外：它没有 `__toString`，PARAM_STR 直绑在 PHP 8 抛
+     * 「Object of class ... could not be converted to string」——先落成 `Y-m-d H:i:s.uP`
+     * （带时区偏移，进 timestamptz 的绝对时刻不随库会话时区漂移）再绑。
      * 命名参数（`:name` 键）保持按名字绑，位置参数按 1 起编号。
      *
      * @param array<string|int, mixed> $bindings
@@ -218,6 +221,9 @@ class PdoConnection implements ExecutorInterface
         $position = 1;
         foreach ($bindings as $key => $value) {
             $param = is_int($key) ? $position++ : $key;
+            if ($value instanceof \DateTimeInterface) {
+                $value = $value->format('Y-m-d H:i:s.uP');
+            }
             $type = match (true) {
                 $value === null => PDO::PARAM_NULL,
                 is_bool($value) => PDO::PARAM_BOOL,

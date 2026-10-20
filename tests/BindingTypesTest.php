@@ -160,6 +160,53 @@ final class BindingTypesTest extends TestCase
     }
 
     /**
+     * 时间值：`DateTimeInterface` 必须在绑定层落成字符串。
+     *
+     * 修复前的现场（应用侧 kode_test IM 插件）：40+ 处写库把 `new \DateTimeImmutable('now')`
+     * 直接交给绑定层，`bindValue(..., PARAM_STR)` 在 PHP 8 下抛
+     * 「Object of class DateTimeImmutable could not be converted to string」——
+     * 会话创建/媒体上传等写路径必炸（E9999 500），而包内与应用侧都没有覆盖这条输入形状。
+     *
+     * 格式带**时区偏移**（`uP`）：裸 `Y-m-d H:i:s` 进 pgsql 的 timestamptz 会按**库会话时区**
+     * 重新解释（应用侧那条 δ 偏移缺陷的成因），带偏移则绝对时刻与会话时区无关。
+     */
+    public function test_datetime_values_bind_as_formatted_strings(): void
+    {
+        $dt = new \DateTimeImmutable('2026-10-20 15:30:45.123456', new \DateTimeZone('+08:00'));
+
+        $conn = $this->recorder();
+        $conn->statement('SELECT ?, ?', [$dt, new \DateTime('2026-01-02 03:04:05', new \DateTimeZone('UTC'))]);
+
+        $bound = $conn->statements[0]->bound;
+        self::assertIsString($bound[0][1], 'DateTimeImmutable 没有在绑定层转成字符串（PHP 8 会抛 Error）');
+        self::assertSame($dt->format('Y-m-d H:i:s.uP'), $bound[0][1], '时间值的落串格式与口径不符');
+        self::assertSame(PDO::PARAM_STR, $bound[0][2]);
+        self::assertIsString($bound[1][1], '可变 DateTime 同样必须先落串');
+    }
+
+    /**
+     * 行为：写进去、读出来是同一个时刻（sqlite TEXT 往返）。
+     * 只测 recorder 的话，「格式串到了 PDO 但库里存成别的」这类分岔看不见。
+     */
+    public function test_a_datetime_round_trips_through_a_column(): void
+    {
+        $dt = new \DateTimeImmutable('2026-10-20 15:30:45.123456', new \DateTimeZone('+08:00'));
+
+        $conn = $this->sqlite();
+        $conn->statement('CREATE TABLE t (id integer, ts TEXT)');
+        $conn->insert('INSERT INTO t VALUES (?, ?)', [1, $dt]);
+
+        $stored = (string) $conn->select('SELECT ts FROM t WHERE id = 1')[0]['ts'];
+
+        self::assertSame($dt->format('Y-m-d H:i:s.uP'), $stored, '库里存下来的时间串与写入口径不一致');
+        self::assertSame(
+            $dt->format('U.u'),
+            (new \DateTimeImmutable($stored))->format('U.u'),
+            '读回来的时刻与写进去的不是同一瞬间'
+        );
+    }
+
+    /**
      * 五个执行口（select/insert/update/delete/statement）必须共用同一个绑定派发口。
      * 留一份 `execute($bindings)` 就等于留一条「写 false 必炸」的暗道，
      * 而它只在**其中一张表**上露头。

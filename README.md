@@ -5,7 +5,7 @@
 
 ## 版本自述
 
-本包版本可由类常量核对：`Kode\Database\Db\Db::VERSION`，或调用 `Db::version()`（当前 `2.3.0`）。
+本包版本可由类常量核对：`Kode\Database\Db\Db::VERSION`，或调用 `Db::version()`（当前 `2.3.1`）。
 
 `composer.json` 的 `version` 字段是 composer 侧的权威值，类常量是它的交叉核对副本——`tests/VersionGuardTest.php` 在两者不一致时直接失败，杜绝「tag 打了、常量忘改」的漂移。
 
@@ -2270,7 +2270,8 @@ pgsql 上的断链**永远不会进重连分支** —— worker 一旦遇到后�
 `Db::select/insert/update/delete/statement()` 与查询构建器最终都走同一个绑定派发口
 （`PdoConnection::bindAll()`）：位置参数按 1 起编号、命名参数按名字绑，
 并且**按 PHP 值的类型声明 PDO 参数类型** —— 只有 `bool` 与 `null` 需要声明，
-其余一律 `PDO::PARAM_STR`（与历史行为逐字节相同，含整数、浮点、`__toString` 对象）。
+其余一律 `PDO::PARAM_STR`（与历史行为逐字节相同，含整数、浮点、`__toString` 对象）；
+`DateTimeInterface` 是唯一例外，绑定前先落成字符串（见下）。
 
 > v1.26.0 起才这样。此前五条语句路径都是 `$stmt->execute($bindings)`，
 > 那条 API 把数组里**每个值都按字符串**绑，于是 PHP 的 `false` 变成空串 `''`：
@@ -2285,11 +2286,19 @@ pgsql 上的断链**永远不会进重连分支** —— worker 一旦遇到后�
 `null` 显式声明为 `PDO::PARAM_NULL`（结果与旧行为相同：PDO 对 PHP null 一律绑 SQL NULL，
 只是把意图写进类型里）。
 
+`DateTimeInterface`（`DateTime` / `DateTimeImmutable`）自 v2.3.1 起直接可绑：`bindAll()`
+先把它格式化为 `Y-m-d H:i:s.uP` 再走 `PARAM_STR`。带偏移是硬要求 —— 裸 `Y-m-d H:i:s`
+进 pgsql 的 `timestamptz` 会按**库会话时区**重新解释（进程与会话时区不一致时静默漂移），
+带偏移则绝对时刻与会话时区无关。修复前这条输入在 PHP 8 下必抛
+`Object of class DateTimeImmutable could not be converted to string`（对象没有 `__toString`），
+查询构建器的 `insert()/update()` 与裸参数绑定两条路一起炸——应用侧 IM 插件的 40+ 处写库
+全军覆没，而两侧测试都没有这条输入形状的用例。
+
 一个坑值得单说：**语句是缓存复用的**（`prepareStatement()`，上限 256 条），
 `bindValue()` 的值会留到下一次 `execute()`。所以「这条 SQL 这次没带某个参数」不等于
 「那个占位符还是空的」——每次调用都必须把全部参数重新绑一遍，缺一个就会用上一次的残值。
 回归见 `tests/BindingTypesTest.php`（含 false 落列、false 作 WHERE 条件、复用语句三次不串值、
-以及 (位置, 值, 类型) 三元组的逐条断言）。
+(位置, 值, 类型) 三元组的逐条断言，以及时间对象落串格式与 sqlite 往返）。
 
 ---
 
